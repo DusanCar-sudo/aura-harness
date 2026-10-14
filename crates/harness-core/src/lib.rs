@@ -7,6 +7,7 @@ pub mod config;
 pub mod error;
 pub mod mcp;
 pub mod online;
+pub mod provider;
 pub mod session;
 pub mod tools;
 

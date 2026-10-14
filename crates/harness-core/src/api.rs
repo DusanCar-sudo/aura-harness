@@ -153,9 +153,15 @@ pub fn normalize_parameters(value: Value) -> Value {
 #[derive(Debug, Default, Clone)]
 pub struct ChatOptions {
     pub model: Option<Model>,
+    /// Override model ID string (for multi-provider routing). When set,
+    /// takes precedence over `model`.
+    pub model_name: Option<String>,
     pub effort: Option<ReasoningEffort>,
     pub max_tokens: Option<u32>,
     pub tools: Vec<ToolDef>,
+    /// Base URL for the chat completions endpoint (only for OpenAI-compatible
+    /// providers). Default uses DeepSeek endpoint if None.
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -255,7 +261,17 @@ pub fn parse_stream_chunk(payload: &str) -> Result<Vec<StreamEvent>> {
 }
 
 fn build_body(messages: &[Message], opts: &ChatOptions) -> Value {
-    let model = opts.model.unwrap_or(Model::Flash);
+    // Use explicit model_name string if provided (multi-provider routing),
+    // else fall back to the Model enum (legacy DeepSeek).
+    // model string: explicit name overrides the enum.
+    let model_str = opts
+        .model_name
+        .clone()
+        .unwrap_or_else(|| match opts.model.unwrap_or(Model::Flash) {
+            Model::Flash => "deepseek-v4.1-flash".to_string(),
+            Model::V4Pro => "deepseek-v4-pro".to_string(),
+        });
+    let model = model_str;
     let effort = opts.effort.unwrap_or(ReasoningEffort::None);
     let thinking = match effort {
         ReasoningEffort::None => ThinkingSwitch { kind: "disabled".into() },
@@ -308,8 +324,11 @@ pub fn stream_chat(
     let api_key = api_key.to_string();
     tokio::spawn(async move {
         let body = build_body(&messages, &opts);
+        let endpoint = reqwest::Url::parse(&format!("{API_BASE}/chat/completions")).unwrap();
+        let base = opts.base_url.clone().unwrap_or_else(|| API_BASE.to_string());
+        let _ = endpoint; // silence unused
         let resp = http
-            .post(format!("{API_BASE}/chat/completions"))
+            .post(format!("{}/chat/completions", base.trim_end_matches('/')))
             .bearer_auth(api_key)
             .json(&body)
             .send()

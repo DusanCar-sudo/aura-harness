@@ -149,6 +149,18 @@ fn default_true() -> bool {
     true
 }
 
+/// Universal Aura home directory — shared across all Aura tools (aura-code,
+/// aura-harness, aura-dsh, etc.). Defaults to `~/.aura`, overridable via
+/// `AURA_HOME`.
+pub fn aura_home() -> PathBuf {
+    if let Ok(dir) = std::env::var("AURA_HOME") {
+        return PathBuf::from(dir);
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(home).join(".aura")
+}
+
+/// Harness-specific config dir — for persona, session storage, etc.
 pub fn config_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("AURA_HARNESS_HOME") {
         return PathBuf::from(dir);
@@ -310,7 +322,15 @@ struct AuraMcpServer {
 /// Empty (not an error) when the file is absent — the normal case on a machine
 /// that never ran Aura Code.
 pub fn aura_code_servers() -> Vec<(String, McpServer)> {
-    aura_code_servers_in(&home_dir())
+    let mut out = Vec::new();
+    // Legacy: ~/.aura/mcp.json (same file aura-code uses)
+    out.extend(aura_code_servers_in(&aura_home()));
+    // Also: home dir (legacy fallback)
+    let home = std::env::var("HOME").ok().map(PathBuf::from);
+    if let Some(home) = home {
+        out.extend(aura_code_servers_in(&home));
+    }
+    out
 }
 
 /// [`aura_code_servers`] against an explicit home, so it can be tested without
@@ -340,23 +360,85 @@ pub fn aura_code_servers_in(home: &Path) -> Vec<(String, McpServer)> {
         .collect()
 }
 
-pub fn load_api_key() -> Option<String> {
-    if let Ok(key) = std::env::var("DEEPSEEK_API_KEY") {
-        if !key.trim().is_empty() {
-            return Some(key.trim().to_string());
+/// Load all keys from the universal Aura .env file. Returns a map of
+/// `KEY_NAME -> value` for every `KEY=value` line (ignoring comments/empty).
+pub fn load_dotenv() -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    let path = aura_home().join(".env");
+    let Ok(text) = std::fs::read_to_string(path) else { return out; };
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') { continue; }
+        let Some((key, value)) = line.split_once('=') else { continue; };
+        let key = key.trim();
+        let value = value.trim().trim_matches(|c| c == '"' || c == '\'').to_string();
+        if !key.is_empty() && !value.is_empty() {
+            out.insert(key.to_string(), value);
         }
     }
+    out
+}
+
+/// Universal API key lookup: tries process env → Aura .env → legacy credentials.
+/// The `key_name` argument can be any `*_API_KEY` or `DEEPSEEK_API_KEY`.
+pub fn load_api_key_named(key_name: &str) -> Option<String> {
+    if let Ok(v) = std::env::var(key_name) {
+        if !v.trim().is_empty() { return Some(v.trim().to_string()); }
+    }
+    if let Some(v) = load_dotenv().get(key_name) {
+        if !v.trim().is_empty() { return Some(v.clone()); }
+    }
+    // Legacy path: ~/.config/aura-harness/credentials (uses api_key= prefix)
     let path = config_dir().join("credentials");
-    let text = std::fs::read_to_string(path).ok()?;
-    for line in text.lines() {
-        if let Some(key) = line.strip_prefix("api_key=") {
-            let key = key.trim();
-            if !key.is_empty() {
-                return Some(key.to_string());
+    if let Ok(text) = std::fs::read_to_string(path) {
+        for line in text.lines() {
+            // Match "api_key=" (legacy) OR "{key_name}=" (newer convention).
+            let legacy = line.strip_prefix("api_key=").map(|v| v.trim());
+            let named = line.strip_prefix(&format!("{}=", key_name)).map(|v| v.trim());
+            for v in [legacy, named].into_iter().flatten() {
+                if !v.is_empty() { return Some(v.to_string()); }
             }
         }
     }
     None
+}
+
+/// Backward-compatible alias for load_api_key_named("DEEPSEEK_API_KEY").
+pub fn load_api_key() -> Option<String> {
+    load_api_key_named("DEEPSEEK_API_KEY")
+}
+
+/// Universal config.json loading from ~/.aura/config.json.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AuraConfigJson {
+    #[serde(default)]
+    pub default_model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<EffortChoice>,
+    #[serde(default)]
+    pub theme: Option<ThemeChoice>,
+    #[serde(default)]
+    pub active_plugins: Vec<String>,
+    #[serde(default)]
+    pub fallbacks: Vec<String>,
+}
+
+pub fn load_config_json() -> AuraConfigJson {
+    let path = aura_home().join("config.json");
+    if let Ok(text) = std::fs::read_to_string(path) {
+        if let Ok(parsed) = serde_json::from_str(&text) {
+            return parsed;
+        }
+    }
+    AuraConfigJson::default()
+}
+
+pub fn save_config_json(cfg: &AuraConfigJson) -> std::io::Result<()> {
+    let dir = aura_home();
+    std::fs::create_dir_all(&dir)?;
+    let text = serde_json::to_string_pretty(cfg)
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    std::fs::write(dir.join("config.json"), text)
 }
 
 /// Store the API key with 0600 permissions.
