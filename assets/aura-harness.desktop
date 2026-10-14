@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Aura Harness
+GenericName=DeepSeek harness
+Comment=DeepSeek chat with streaming reasoning, markdown and plugins
+Exec=aura-harness
+Icon=aura-harness
+Terminal=false
+Categories=Development;Utility;
+Keywords=aura;deepseek;dsh;chat;llm;ai;
+StartupNotify=true
+StartupWMClass=aura-harness
