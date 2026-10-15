@@ -320,6 +320,24 @@ pub fn stream_chat(
     messages: Vec<Message>,
     opts: ChatOptions,
 ) -> tokio::sync::mpsc::Receiver<Result<StreamEvent>> {
+    // Defer to vendor-specific transports where needed so the OpenAI-compat
+    // path stays the default for the openapi-compatible 90%.
+    if let Some(model) = opts.model_name.as_deref() {
+        let base_url = opts.base_url.clone();
+        let family = crate::provider::provider_family(model);
+        if family == "Anthropic" || model.starts_with("claude/") {
+            return crate::provider::stream_anthropic(
+                http, &api_key, base_url.as_deref(), messages, opts,
+            );
+        }
+        if family == "Google" || model.starts_with("gemini/") {
+            return crate::provider::stream_google(
+                http, &api_key, base_url.as_deref(), messages, opts,
+            );
+        }
+    }
+    // re-bind opts if not moved (it wasn't moved in the non-delegating path) 
+    let _ = &opts;
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<StreamEvent>>(256);
     let api_key = api_key.to_string();
     tokio::spawn(async move {

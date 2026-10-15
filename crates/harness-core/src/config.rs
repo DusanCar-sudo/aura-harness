@@ -12,6 +12,12 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     #[serde(default)]
     pub model: ModelChoice,
+    /// Universal multi-provider selector: full model id (e.g. "claude-sonnet-4").
+    #[serde(default)]
+    pub model_id: String,
+    /// Base URL auto-filled from the selected model's provider.
+    #[serde(default)]
+    pub base_url: Option<String>,
     #[serde(default)]
     pub reasoning_effort: EffortChoice,
     #[serde(default)]
@@ -49,6 +55,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             model: ModelChoice::Flash,
+            model_id: "deepseek-flash".to_string(),
+            base_url: Some("https://api.deepseek.com/v1".to_string()),
             reasoning_effort: EffortChoice::High,
             theme: ThemeChoice::Nature,
             system_prompt: String::new(),

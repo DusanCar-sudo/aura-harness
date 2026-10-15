@@ -86,8 +86,11 @@ struct App {
     applied_theme: harness_core::config::ThemeChoice,
     /// The Aura mark, loaded from the real artwork.
     logo: Option<egui::TextureHandle>,
-    /// Plugin browser window state.
+    /// Popup window state for the plugin browser.
     show_browser: bool,
+    right_panel: bool,
+    file_tree: ui::filetree::FileTreeState,
+    current_dir: std::path::PathBuf,
     catalog_query: String,
     /// Launch line typed in the browser's manual field.
     browser_line: String,
@@ -164,6 +167,9 @@ impl App {
             applied_theme: theme_choice,
             logo: load_logo(&cc.egui_ctx),
             show_browser: false,
+            right_panel: true,
+            file_tree: ui::filetree::FileTreeState::new("."),
+            current_dir: std::path::PathBuf::from("."),
             catalog_query: String::new(),
             browser_line: String::new(),
             online: ui::plugin_browser::OnlineResults::default(),
@@ -430,10 +436,23 @@ impl App {
         if self.busy || !ui::input::is_sendable(&self.draft, self.attachments.len()) {
             return;
         }
-        let Some(key) = self.api_key.clone() else {
-            self.error = Some("add your DeepSeek API key in Settings first".into());
+        // Resolve provider key from the selected model_id, falling back to
+        // the stored key. Makes the app model-agnostic, not DeepSeek-only.
+        let resolved_key = if !self.config.model_id.trim().is_empty() {
+            harness_core::provider::get_api_key_for_model(self.config.model_id.trim())
+        } else {
+            self.api_key.clone()
+        };
+        let Some(key) = resolved_key else {
+            self.error = Some("add an API key for your selected model in Settings (or set AURA_HOME / env vars)".into());
             self.view = View::Settings;
             return;
+        };
+
+        let base_url = if !self.config.model_id.trim().is_empty() {
+            harness_core::provider::base_url_for(self.config.model_id.trim())
+        } else {
+            None
         };
 
         let mut text = self.draft.trim().to_string();
@@ -465,7 +484,17 @@ impl App {
         self.persist();
 
         let opts = ChatOptions {
-            model: Some(self.model.into()),
+            model: if self.config.model_id.trim().is_empty() {
+                Some(self.model.into())
+            } else {
+                None
+            },
+            model_name: if self.config.model_id.trim().is_empty() {
+                None
+            } else {
+                Some(self.config.model_id.trim().to_string())
+            },
+            base_url,
             effort: Some(self.effort.into()),
             ..Default::default()
         };
@@ -722,6 +751,72 @@ impl eframe::App for App {
             self.handle_sidebar(action);
         }
 
+        // Right-hand panel: file tree (attach files) + curated plugin browser.
+        if self.right_panel {
+            let mut close_right = false;
+            let mut clicked_add: Option<(String, String)> = None;
+            let mut clicked_file: Option<std::path::PathBuf> = None;
+            let configured: Vec<String> = self.plugins.mcp.keys().cloned().collect();
+            let mut query_edit = self.catalog_query.clone();
+            egui::SidePanel::right("right-panel")
+                .resizable(true)
+                .default_width(270.0)
+                .width_range(220.0..=420.0)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("📁 Files  •  🔌 Plugins");
+                        if ui.small_button("✕").clicked() {
+                            close_right = true;
+                        }
+                    });
+                    ui.separator();
+                    egui::CollapsingHeader::new("Project files")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            if let Some(p) = self.file_tree.show(ui) {
+                                clicked_file = Some(p);
+                            }
+                        });
+                    ui.separator();
+                    ui.label("Plugin search");
+                    ui.text_edit_singleline(&mut query_edit);
+                    if query_edit.trim().len() < 2 {
+                        ui.small("Type to search (e.g. gaming, social media, 3d game, summertime)");
+                    } else {
+                        let hits = harness_core::catalog::search(&query_edit);
+                        if hits.is_empty() {
+                            ui.small("No matches.");
+                        }
+                        for e in hits {
+                            if configured.contains(&harness_core::catalog::plugin_key(e)) {
+                                continue;
+                            }
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Label::new(e.name).truncate());
+                                if ui.small_button("Add").clicked() {
+                                    clicked_add = Some((e.name.to_string(), e.launch_line.to_string()));
+                                }
+                            });
+                        }
+                    }
+                });
+            self.catalog_query = query_edit;
+            if close_right {
+                self.right_panel = false;
+            }
+            if let Some(p) = clicked_file {
+                let hint = format!("@{}", p.display());
+                if self.draft.is_empty() {
+                    self.draft.push_str(&hint);
+                } else {
+                    self.draft.push_str(&format!(" {}", hint));
+                }
+            }
+            if let Some((n, l)) = clicked_add {
+                self.add_mcp_server(&n, &l);
+            }
+        }
+
         // Composer (hidden in settings so the form gets the room).
         if self.view == View::Chat {
             let mut composer_action = None;
@@ -896,7 +991,8 @@ fn window_icon() -> egui::IconData {
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1100.0, 760.0])
+            .with_inner_size([1320.0, 820.0])
+            .with_min_inner_size([1024.0, 680.0])
             .with_min_inner_size([760.0, 520.0])
             .with_title("Aura Harness")
             .with_icon(window_icon()),

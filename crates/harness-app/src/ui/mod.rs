@@ -1,6 +1,7 @@
 //! Panels: conversation list, chat transcript, composer, settings.
 
 pub mod chat;
+pub mod filetree;
 pub mod input;
 pub mod plugin_browser;
 pub mod settings;
