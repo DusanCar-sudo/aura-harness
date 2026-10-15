@@ -192,6 +192,19 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
                         .rect_filled(rect, egui::Rounding::same(3.0), color);
                 }
             });
+            ui.horizontal(|ui| {
+                ui.label("Background image");
+                ui.text_edit_singleline(&mut state.config.background_image);
+                if ui.button("Pick...").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("image", &["png", "jpg", "jpeg", "webp"])
+                        .pick_file()
+                    {
+                        state.config.background_image = path.display().to_string();
+                    }
+                }
+            });
+            ui.small("Optional full background (png/jpg/webp). To keep readability, pick subtle textures or mute the image.");
             // Ensure universal selector has a default model id.
             if state.config.model_id.trim().is_empty() {
                 state.config.model_id = "deepseek-flash".to_string();

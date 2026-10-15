@@ -22,6 +22,9 @@ pub struct Config {
     pub reasoning_effort: EffortChoice,
     #[serde(default)]
     pub theme: ThemeChoice,
+    /// Optional full-app background image path.
+    #[serde(default)]
+    pub background_image: String,
     #[serde(default)]
     pub system_prompt: String,
     /// Mirror session summaries to the shared AGENTMEM store (Aura memory layer).
@@ -59,6 +62,7 @@ impl Default for Config {
             base_url: Some("https://api.deepseek.com/v1".to_string()),
             reasoning_effort: EffortChoice::High,
             theme: ThemeChoice::Nature,
+            background_image: String::new(),
             system_prompt: String::new(),
             agentmem_mirror: true,
         }

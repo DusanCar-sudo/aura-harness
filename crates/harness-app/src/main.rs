@@ -86,6 +86,8 @@ struct App {
     applied_theme: harness_core::config::ThemeChoice,
     /// The Aura mark, loaded from the real artwork.
     logo: Option<egui::TextureHandle>,
+    bg_loaded_path: String,
+    bg_texture: Option<egui::TextureHandle>,
     /// Popup window state for the plugin browser.
     show_browser: bool,
     right_panel: bool,
@@ -166,6 +168,8 @@ impl App {
             available: Vec::new(),
             applied_theme: theme_choice,
             logo: load_logo(&cc.egui_ctx),
+            bg_loaded_path: String::new(),
+            bg_texture: None,
             show_browser: false,
             right_panel: true,
             file_tree: ui::filetree::FileTreeState::new("."),
@@ -725,6 +729,32 @@ impl eframe::App for App {
             self.applied_theme = self.config.theme;
             theme::apply(ctx, self.applied_theme);
         }
+        // Load full-span background image on demand.
+        let bg_path = self.config.background_image.clone();
+        if bg_path != self.bg_loaded_path {
+            self.bg_loaded_path = bg_path.clone();
+            self.bg_texture = if bg_path.trim().is_empty() {
+                None
+            } else {
+                load_img_texture(ctx, &bg_path)
+            };
+            // reapply + normalize alphas based on background visibility
+            theme::apply(ctx, self.applied_theme);
+            if self.bg_texture.is_some() {
+                ctx.style_mut(|s| {
+                    let a = 0.75;
+                    s.visuals.panel_fill = s.visuals.panel_fill.gamma_multiply(a);
+                    s.visuals.window_fill = s.visuals.window_fill.gamma_multiply(a);
+                    s.visuals.faint_bg_color = s.visuals.faint_bg_color.gamma_multiply(a);
+                    s.visuals.code_bg_color = s.visuals.code_bg_color.gamma_multiply(a);
+                    s.visuals.extreme_bg_color = s.visuals.extreme_bg_color.gamma_multiply(a);
+                });
+            }
+        }
+        if let Some(tex) = &self.bg_texture {
+            let layer = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("aura-bg")));
+            layer.image(tex.id(), ctx.screen_rect(), egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+        }
 
         let current_id = self.session.as_ref().map(|s| s.header.id.clone());
         let plugin_line = self.plugin_status_line();
@@ -983,6 +1013,12 @@ fn load_logo(ctx: &egui::Context) -> Option<egui::TextureHandle> {
     Some(ctx.load_texture("aura-mark", image, egui::TextureOptions::LINEAR))
 }
 
+fn load_img_texture(ctx: &egui::Context, path: &str) -> Option<egui::TextureHandle> {
+    let bytes = std::fs::read(path).ok()?;
+    let image = egui_extras::image::load_image_bytes(&bytes).ok()?;
+    Some(ctx.load_texture("aura-bg", image, egui::TextureOptions::LINEAR))
+}
+
 fn window_icon() -> egui::IconData {
     egui::IconData {
         rgba: ICON_RGBA.to_vec(),
@@ -997,7 +1033,7 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([1320.0, 820.0])
             .with_min_inner_size([1024.0, 680.0])
             .with_min_inner_size([760.0, 520.0])
-            .with_title("Aura Harness")
+            .with_title("AURA harness")
             .with_icon(window_icon()),
         ..Default::default()
     };
