@@ -196,11 +196,16 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
                 ui.label("Background image");
                 ui.text_edit_singleline(&mut state.config.background_image);
                 if ui.button("Pick...").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("image", &["png", "jpg", "jpeg", "webp"])
-                        .pick_file()
-                    {
-                        state.config.background_image = path.display().to_string();
+                    // A portal hiccup must not take the harness down.
+                    let picked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        rfd::FileDialog::new()
+                            .add_filter("image", &["png", "jpg", "jpeg", "webp", "bmp"])
+                            .pick_file()
+                    }))
+                    .unwrap_or(None);
+                    match picked {
+                        Some(path) => state.config.background_image = path.display().to_string(),
+                        None => {}
                     }
                 }
             });

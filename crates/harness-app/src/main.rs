@@ -703,7 +703,11 @@ impl App {
 
     /// Pick text files and read them as prompt context.
     fn attach_files(&mut self) {
-        let Some(paths) = rfd::FileDialog::new().pick_files() else {
+        let picked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rfd::FileDialog::new().pick_files()
+        }))
+        .unwrap_or(None);
+        let Some(paths) = picked else {
             return;
         };
         for path in paths {
@@ -736,7 +740,13 @@ impl eframe::App for App {
             self.bg_texture = if bg_path.trim().is_empty() {
                 None
             } else {
-                load_img_texture(ctx, &bg_path)
+                match load_img_texture(ctx, &bg_path) {
+                    Ok(t) => Some(t),
+                    Err(e) => {
+                        self.error = Some(format!("background image not loaded: {e}"));
+                        None
+                    }
+                }
             };
             // reapply + normalize alphas based on background visibility
             theme::apply(ctx, self.applied_theme);
@@ -1013,10 +1023,44 @@ fn load_logo(ctx: &egui::Context) -> Option<egui::TextureHandle> {
     Some(ctx.load_texture("aura-mark", image, egui::TextureOptions::LINEAR))
 }
 
-fn load_img_texture(ctx: &egui::Context, path: &str) -> Option<egui::TextureHandle> {
-    let bytes = std::fs::read(path).ok()?;
-    let image = egui_extras::image::load_image_bytes(&bytes).ok()?;
-    Some(ctx.load_texture("aura-bg", image, egui::TextureOptions::LINEAR))
+/// Decode an image and make a GPU texture, with hard limits.
+///
+/// A raw photo (6000x4000) overflowed the wgpu texture budget and took the
+/// whole app down, so we downscale first and refuse absurd sizes instead of
+/// panicking inside eframe.
+const BG_MAX_EDGE: u32 = 2048;
+const BG_MAX_PIXELS: u64 = 4_000_000;
+
+fn load_img_texture(ctx: &egui::Context, path: &str) -> Result<egui::TextureHandle, String> {
+    // egui asserts (debug) / the GPU rejects textures past the device limit.
+    let max_edge = ctx.input(|i| i.max_texture_side).min(BG_MAX_EDGE as usize).max(64) as u32;
+    let img = image::open(path).map_err(|e| format!("{path}: {e}"))?;
+    let (w, h) = (img.width(), img.height());
+    let pixels = w as u64 * h as u64;
+    if w == 0 || h == 0 {
+        return Err(format!("{path}: empty image"));
+    }
+    if pixels > BG_MAX_PIXELS * 4 {
+        return Err(format!(
+            "{path}: {w}x{h} is too large for a background (limit {} px)",
+            BG_MAX_PIXELS * 4
+        ));
+    }
+    let rgba = if w > max_edge || h > max_edge {
+        let scale = (max_edge as f64 / w.max(h) as f64).min(1.0);
+        let nw = ((w as f64 * scale) as u32).max(1);
+        let nh = ((h as f64 * scale) as u32).max(1);
+        img.resize(nw, nh, image::imageops::FilterType::Triangle).to_rgba8()
+    } else {
+        img.to_rgba8()
+    };
+    let size = [rgba.width() as usize, rgba.height() as usize];
+    let color = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+    // A GPU that refuses the allocation must not take the window down.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ctx.load_texture("aura-bg", color, egui::TextureOptions::LINEAR)
+    }))
+    .map_err(|_| format!("{path}: GPU refused a {}x{} texture", size[0], size[1]))
 }
 
 fn window_icon() -> egui::IconData {
@@ -1068,5 +1112,32 @@ mod tests {
     #[test]
     fn embedded_icon_is_64x64_rgba() {
         assert_eq!(ICON_RGBA.len(), 64 * 64 * 4);
+    }
+
+    #[test]
+    fn background_image_is_downscaled_and_failures_are_errors() {
+        let dir = std::env::temp_dir().join("aura-bg-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // A photo-sized image used to blow the wgpu texture budget and kill
+        // the app; it must come back downscaled instead.
+        let big = dir.join("big.png");
+        let mut img = image::RgbaImage::new(4000, 3000);
+        img.put_pixel(0, 0, image::Rgba([10, 20, 30, 255]));
+        img.save(&big).unwrap();
+
+        let ctx = egui::Context::default();
+        let tex = load_img_texture(&ctx, big.to_str().unwrap()).expect("big png loads");
+        let [w, h] = tex.size();
+        assert!(w as u32 <= BG_MAX_EDGE && h as u32 <= BG_MAX_EDGE, "{w}x{h}");
+        assert_eq!([w, h], tex.size(), "texture matches the requested size");
+
+        // Absurd input is refused, not fatal.
+        let bad = dir.join("bad.png");
+        std::fs::write(&bad, b"definitely not an image").unwrap();
+        assert!(load_img_texture(&ctx, bad.to_str().unwrap()).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
