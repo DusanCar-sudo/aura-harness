@@ -50,8 +50,8 @@ pub fn show(ui: &mut Ui, state: &SidebarState<'_>) -> Option<SidebarAction> {
         }
         ui.add_space(4.0);
         ui.vertical(|ui| {
-            ui.label(RichText::new("AURA").color(theme::accent()).strong().size(18.0));
-            ui.label(RichText::new("HARNESS").color(theme::text()).strong().size(18.0));
+            ui.label(RichText::new("AURA").color(theme::accent()).strong().size(24.0));
+            ui.label(RichText::new("harness").color(theme::dim()).size(11.0));
         });
     });
     ui.add_space(2.0);
