@@ -194,7 +194,11 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
             });
             ui.horizontal(|ui| {
                 ui.label("Background image");
-                ui.text_edit_singleline(&mut state.config.background_image);
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.config.background_image)
+                        .desired_width(220.0)
+                        .hint_text("path to png/jpg/webp"),
+                );
                 if ui.button("Pick...").clicked() {
                     // A portal hiccup must not take the harness down.
                     let picked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -203,13 +207,33 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
                             .pick_file()
                     }))
                     .unwrap_or(None);
-                    match picked {
-                        Some(path) => state.config.background_image = path.display().to_string(),
-                        None => {}
+                    if let Some(path) = picked {
+                        state.config.background_image = path.display().to_string();
+                        // Save at once: a background that needs a restart to
+                        // appear reads as broken.
+                        let _ = state.config.save();
                     }
                 }
+                if ui.button("Clear").clicked() {
+                    state.config.background_image.clear();
+                    let _ = state.config.save();
+                }
             });
-            ui.small("Optional full background (png/jpg/webp). To keep readability, pick subtle textures or mute the image.");
+            let bg_set = !state.config.background_image.trim().is_empty();
+            ui.add_enabled(
+                bg_set,
+                egui::Slider::new(&mut state.config.background_opacity, 0.0..=1.0)
+                    .text("background strength"),
+            );
+            if bg_set {
+                ui.small(format!("active: {}", state.config.background_image));
+                if ui.link("clear it").clicked() {
+                    state.config.background_image.clear();
+                    let _ = state.config.save();
+                }
+            } else {
+                ui.small("No background set. Pick a png/jpg/webp; it is drawn behind every panel.");
+            }
             // Ensure universal selector has a default model id.
             if state.config.model_id.trim().is_empty() {
                 state.config.model_id = "deepseek-flash".to_string();

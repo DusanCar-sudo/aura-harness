@@ -88,6 +88,11 @@ struct App {
     logo: Option<egui::TextureHandle>,
     bg_loaded_path: String,
     bg_texture: Option<egui::TextureHandle>,
+    /// True while panels are blended over the background image.
+    bg_blend_active: bool,
+    /// Last background values written to disk.
+    bg_saved_image: String,
+    bg_saved_opacity: f32,
     /// Popup window state for the plugin browser.
     show_browser: bool,
     right_panel: bool,
@@ -170,6 +175,9 @@ impl App {
             logo: load_logo(&cc.egui_ctx),
             bg_loaded_path: String::new(),
             bg_texture: None,
+            bg_blend_active: false,
+            bg_saved_image: String::new(),
+            bg_saved_opacity: -1.0,
             show_browser: false,
             right_panel: true,
             file_tree: ui::filetree::FileTreeState::new("."),
@@ -733,11 +741,11 @@ impl eframe::App for App {
             self.applied_theme = self.config.theme;
             theme::apply(ctx, self.applied_theme);
         }
-        // Load full-span background image on demand.
-        let bg_path = self.config.background_image.clone();
+        // ---- background image ------------------------------------------
+        let bg_path = self.config.background_image.trim().to_string();
         if bg_path != self.bg_loaded_path {
             self.bg_loaded_path = bg_path.clone();
-            self.bg_texture = if bg_path.trim().is_empty() {
+            self.bg_texture = if bg_path.is_empty() {
                 None
             } else {
                 match load_img_texture(ctx, &bg_path) {
@@ -748,22 +756,59 @@ impl eframe::App for App {
                     }
                 }
             };
-            // reapply + normalize alphas based on background visibility
-            theme::apply(ctx, self.applied_theme);
-            if self.bg_texture.is_some() {
-                ctx.style_mut(|s| {
-                    let a = 0.75;
-                    s.visuals.panel_fill = s.visuals.panel_fill.gamma_multiply(a);
-                    s.visuals.window_fill = s.visuals.window_fill.gamma_multiply(a);
-                    s.visuals.faint_bg_color = s.visuals.faint_bg_color.gamma_multiply(a);
-                    s.visuals.code_bg_color = s.visuals.code_bg_color.gamma_multiply(a);
-                    s.visuals.extreme_bg_color = s.visuals.extreme_bg_color.gamma_multiply(a);
-                });
+        }
+        if self.bg_texture.is_some() {
+            if let Some(tex) = &self.bg_texture {
+                // Full-window wallpaper on the background layer; panels sit on
+                // top with alpha, so the image reads through every section.
+                // Panels paint on egui's shared background layer; painting
+                // there FIRST (this runs before any panel is created) puts the
+                // image underneath everything. A private layer sorted after
+                // the panels' layer would cover the UI instead.
+                let layer = ctx.layer_painter(egui::LayerId::background());
+                layer.image(
+                    tex.id(),
+                    ctx.screen_rect(),
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
             }
         }
-        if let Some(tex) = &self.bg_texture {
-            let layer = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("aura-bg")));
-            layer.image(tex.id(), ctx.screen_rect(), egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+        // Panels go translucent every frame while a background is live, so the
+        // slider works immediately instead of only on the next restart.
+        let bg_on = self.bg_texture.is_some();
+        if bg_on != self.bg_blend_active {
+            self.bg_blend_active = bg_on;
+            theme::apply(ctx, self.applied_theme);
+        }
+        // Persist background edits immediately (settings feels broken if a
+        // restart silently drops the choice).
+        if self.bg_saved_image != self.config.background_image.trim().to_string()
+            || (self.bg_saved_opacity - self.config.background_opacity).abs() > 0.001
+        {
+            self.bg_saved_image = self.config.background_image.trim().to_string();
+            self.bg_saved_opacity = self.config.background_opacity;
+            let _ = self.config.save();
+        }
+        if bg_on {
+            let p = theme::palette_for(self.applied_theme);
+            // blend = how much of the image shows through; panels keep the rest.
+            let blend = self.config.background_opacity.clamp(0.0, 1.0);
+            let alpha = ((1.0 - blend) * 255.0).round() as u8;
+            ctx.style_mut(|s| {
+                let a = |c: egui::Color32| egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), alpha);
+                s.visuals.panel_fill = a(p.panel);
+                s.visuals.window_fill = a(p.card);
+                s.visuals.faint_bg_color = a(p.card);
+                s.visuals.extreme_bg_color = a(p.field);
+                s.visuals.code_bg_color = a(p.field);
+                s.visuals.widgets.noninteractive.bg_fill = a(p.panel);
+                s.visuals.widgets.noninteractive.weak_bg_fill = a(p.panel);
+                s.visuals.widgets.inactive.bg_fill = a(p.card);
+                s.visuals.widgets.inactive.weak_bg_fill = a(p.card);
+                s.visuals.widgets.hovered.bg_fill = a(p.bubble);
+                s.visuals.widgets.hovered.weak_bg_fill = a(p.bubble);
+            });
         }
 
         let current_id = self.session.as_ref().map(|s| s.header.id.clone());

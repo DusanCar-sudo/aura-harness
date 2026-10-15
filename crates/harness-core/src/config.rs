@@ -25,6 +25,9 @@ pub struct Config {
     /// Optional full-app background image path.
     #[serde(default)]
     pub background_image: String,
+    /// How much of the background image shows through the panels (0..=1).
+    #[serde(default = "default_background_opacity")]
+    pub background_opacity: f32,
     #[serde(default)]
     pub system_prompt: String,
     /// Mirror session summaries to the shared AGENTMEM store (Aura memory layer).
@@ -63,10 +66,15 @@ impl Default for Config {
             reasoning_effort: EffortChoice::High,
             theme: ThemeChoice::Nature,
             background_image: String::new(),
+            background_opacity: default_background_opacity(),
             system_prompt: String::new(),
             agentmem_mirror: true,
         }
     }
+}
+
+fn default_background_opacity() -> f32 {
+    0.35
 }
 
 /// Which look to wear. The palettes themselves live in the app crate.
