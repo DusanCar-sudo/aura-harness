@@ -1,8 +1,8 @@
 //! File browser panel for the right-hand side of the harness UI.
 //!
-//! Lists a directory tree (max 3 levels deep) with a filter box; clicking a
-//! file returns its path to the caller via the return value (`Some(PathBuf)`).
-//! Directories are shown as collapsible headers.
+//! Browsable directory tree: expand/collapse folders, "hop in" to SSH into a
+//! subfolder as the base view root, filter, and click a file to emit its path.
+//! Directories are interactive (expand, navigate, hover hints).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Default)]
 pub struct FileTreeState {
     pub root: PathBuf,
+    pub current: PathBuf,
     pub filter: String,
     pub expanded: std::collections::BTreeSet<PathBuf>,
     pub max_depth: usize,
@@ -17,24 +18,71 @@ pub struct FileTreeState {
 
 impl FileTreeState {
     pub fn new(root: impl Into<PathBuf>) -> Self {
+        let r: PathBuf = root.into();
         Self {
-            root: root.into(),
+            root: r.clone(),
+            current: r,
             filter: String::new(),
             expanded: std::collections::BTreeSet::new(),
-            max_depth: 3,
+            max_depth: 4,
+        }
+    }
+
+    /// Ensures a walkable base directory (falls back to the program's cwd).
+    fn base(&self) -> PathBuf {
+        if self.current.as_os_str().is_empty() {
+            self.root.clone()
+        } else {
+            self.current.clone()
         }
     }
 
     /// Returns a clicked file path, if any.
     pub fn show(&mut self, ui: &mut egui::Ui) -> Option<PathBuf> {
         let mut clicked: Option<PathBuf> = None;
-        ui.text_edit_singleline(&mut self.filter);
-        let filter = self.filter.to_lowercase();
-        self.show_dir(ui, self.root.clone(), 0, &filter, &mut clicked);
+        if self.current.as_os_str().is_empty() {
+            self.current = self.root.clone();
+        }
+        if self.root.as_os_str().is_empty() {
+            self.root = PathBuf::from(".");
+            self.current = self.root.clone();
+        }
+
+        ui.horizontal(|ui| {
+            ui.small("Location:");
+            ui.small(self.current.display().to_string());
+            if ui.small_button("root").clicked() && self.current != self.root {
+                self.current = self.root.clone();
+                self.expanded.clear();
+            }
+            if let Some(parent) = self.current.parent() {
+                if self.current != self.root {
+                    if ui.small_button("up").clicked() {
+                        self.current = parent.to_path_buf();
+                        self.expanded.clear();
+                    }
+                }
+            }
+        });
+        ui.separator();
+        ui.add(
+            egui::TextEdit::singleline(&mut self.filter)
+                .hint_text("filter (name or path)"),
+        );
+
+        self.show_dir(ui, self.current.clone(), 0, &self.filter.to_string().to_lowercase(), &mut clicked);
+
         clicked
     }
 
-    fn show_dir(&mut self, ui: &mut egui::Ui, dir: PathBuf, depth: usize, filter: &str, clicked: &mut Option<PathBuf>) {
+    fn show_dir(
+        &mut self,
+        ui: &mut egui::Ui,
+        dir: PathBuf,
+        depth: usize,
+        filter: &str,
+        clicked: &mut Option<PathBuf>,
+    ) {
         if depth > self.max_depth {
             return;
         }
@@ -60,30 +108,38 @@ impl FileTreeState {
             if !filter.is_empty() {
                 let haystack = p.to_string_lossy().to_lowercase();
                 if !haystack.contains(filter) {
-                    // still descend into dirs
+                    // still descend into dirs, so matches deeper show up
                     if is_dir { self.show_dir(ui, p, depth + 1, filter, clicked); }
                     continue;
                 }
             }
-            let indent = depth as f32 * 14.0;
-            ui.add_space(2.0);
-            ui.indent(egui::Id::new(&p), |ui| {
+            ui.horizontal(|ui| {
+                // indentation via per-line spacer
+                for _ in 0..depth {
+                    ui.add_space(14.0);
+                }
                 if is_dir {
                     let expanded = self.expanded.contains(&p);
                     let icon = if expanded { "📂" } else { "📁" };
                     if ui.button(format!("{} {}", icon, name)).clicked() {
                         if expanded { self.expanded.remove(&p); } else { self.expanded.insert(p.clone()); }
                     }
+                    if ui.small_button("in").on_hover_text("Hop into folder").clicked() {
+                        self.current = p.clone();
+                        self.expanded.clear();
+                    }
                     if expanded {
                         self.show_dir(ui, p, depth + 1, filter, clicked);
                     }
                 } else {
                     let label = format!("📄 {}", name);
-                    // highlight filter
-                    if ui.button(&label).clicked() {
+                    if ui
+                        .button(&label)
+                        .on_hover_text(p.display().to_string())
+                        .clicked()
+                    {
                         *clicked = Some(p.clone());
                     }
-                    let _ = indent;
                 }
             });
         }
