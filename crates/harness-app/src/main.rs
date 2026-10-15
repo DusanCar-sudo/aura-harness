@@ -1121,7 +1121,6 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1320.0, 820.0])
             .with_min_inner_size([1024.0, 680.0])
-            .with_min_inner_size([760.0, 520.0])
             .with_title("AURA harness")
             .with_icon(window_icon()),
         ..Default::default()

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 /// Cap on stream → tools → stream rounds, so a confused model cannot spin.
-pub const MAX_TOOL_ROUNDS: usize = 8;
+pub const MAX_TOOL_ROUNDS: usize = 20;
 
 /// What the UI must decide before a command tool runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
