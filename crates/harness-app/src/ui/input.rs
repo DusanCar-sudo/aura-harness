@@ -19,6 +19,7 @@ pub struct ComposerState<'a> {
     pub attachments: &'a [Attachment],
     pub model: &'a mut ModelChoice,
     pub effort: &'a mut EffortChoice,
+    pub selected_model: Option<String>,
     pub busy: bool,
     pub tool_count: usize,
 }
@@ -57,7 +58,7 @@ pub fn show(ui: &mut Ui, state: &mut ComposerState<'_>) -> Option<ComposerAction
         action = Some(ComposerAction::Send);
     }
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui
             .button("Attach")
             .on_hover_text("Attach text files as context")
@@ -66,12 +67,16 @@ pub fn show(ui: &mut Ui, state: &mut ComposerState<'_>) -> Option<ComposerAction
             action = Some(ComposerAction::Attach);
         }
 
-        egui::ComboBox::from_id_salt("model-picker")
-            .selected_text(model_label(*state.model))
-            .show_ui(ui, |ui| {
-                ui.selectable_value(state.model, ModelChoice::Flash, "deepseek-flash");
-                ui.selectable_value(state.model, ModelChoice::V4Pro, "deepseek-v4-pro");
-            });
+        if let Some(model) = &state.selected_model {
+            ui.label(format!("Model: {}", model));
+        } else {
+            egui::ComboBox::from_id_salt("model-picker")
+                .selected_text(model_label(*state.model))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(state.model, ModelChoice::Flash, "deepseek-flash");
+                    ui.selectable_value(state.model, ModelChoice::V4Pro, "deepseek-v4-pro");
+                });
+        }
 
         egui::ComboBox::from_id_salt("effort-picker")
             .selected_text(effort_label(*state.effort))

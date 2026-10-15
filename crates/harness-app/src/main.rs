@@ -763,6 +763,7 @@ impl eframe::App for App {
                 .default_width(270.0)
                 .width_range(220.0..=420.0)
                 .show(ctx, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label("📁 Files  •  🔌 Plugins");
                         if ui.small_button("✕").clicked() {
@@ -800,6 +801,7 @@ impl eframe::App for App {
                         }
                     }
                 });
+            });
             self.catalog_query = query_edit;
             if close_right {
                 self.right_panel = false;
@@ -829,6 +831,7 @@ impl eframe::App for App {
                         attachments: &self.attachments,
                         model: &mut self.model,
                         effort: &mut self.effort,
+                        selected_model: if self.config.model_id.trim().is_empty() { None } else { Some(self.config.model_id.trim().to_string()) },
                         busy: self.busy,
                         tool_count: self.registry.len(),
                     },

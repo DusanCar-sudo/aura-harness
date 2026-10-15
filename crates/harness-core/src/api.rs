@@ -268,7 +268,7 @@ fn build_body(messages: &[Message], opts: &ChatOptions) -> Value {
         .model_name
         .clone()
         .unwrap_or_else(|| match opts.model.unwrap_or(Model::Flash) {
-            Model::Flash => "deepseek-v4.1-flash".to_string(),
+            Model::Flash => "deepseek-flash".to_string(),
             Model::V4Pro => "deepseek-v4-pro".to_string(),
         });
     let model = model_str;
