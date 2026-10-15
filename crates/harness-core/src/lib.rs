@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod builtins;
 pub mod api;
 pub mod attach;
 pub mod catalog;

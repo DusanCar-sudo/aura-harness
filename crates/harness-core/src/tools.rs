@@ -1,12 +1,15 @@
 //! Tool plumbing: providers contribute tool definitions and execute calls.
 
 use crate::api::ToolDef;
+use crate::builtins::BuiltinTool;
 use crate::error::{Error, Result};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 /// Where a tool call came from and how to run it.
 #[derive(Debug, Clone)]
 pub enum ToolExecutor {
+    /// Built-in tool shipped with the harness (shell, read, write, ...).
+    Builtin(BuiltinTool),
     /// Local command; requires user approval before each run.
     Command(crate::config::CommandTool),
     /// MCP tool: server name + original tool name on that server.
@@ -23,14 +26,30 @@ pub struct RegisteredTool {
 #[derive(Debug, Clone, Default)]
 pub struct ToolRegistry {
     by_name: BTreeMap<String, RegisteredTool>,
+    /// Built-in names: plugins/MCP can add tools, never shadow the core ones.
+    builtins: HashSet<String>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
-        Self::default()
+        let mut reg = Self::default();
+        for tool in BuiltinTool::all() {
+            reg.builtins.insert(tool.name().into());
+            reg.by_name.insert(
+                tool.name().into(),
+                RegisteredTool {
+                    def: tool.def(),
+                    executor: ToolExecutor::Builtin(tool),
+                },
+            );
+        }
+        reg
     }
 
     pub fn register(&mut self, tool: RegisteredTool) {
+        if self.builtins.contains(&tool.def.name) {
+            return; // built-ins are not overridable by plugins
+        }
         self.by_name.insert(tool.def.name.clone(), tool);
     }
 
@@ -54,7 +73,11 @@ impl ToolRegistry {
 
     /// True when the tool needs an explicit user approval before running.
     pub fn needs_approval(&self, name: &str) -> Result<bool> {
-        Ok(matches!(self.get(name)?.executor, ToolExecutor::Command(_)))
+        Ok(match self.get(name)?.executor {
+            ToolExecutor::Builtin(t) => t.needs_approval(),
+            ToolExecutor::Command(_) => true,
+            ToolExecutor::Mcp { .. } => false,
+        })
     }
 }
 
@@ -102,8 +125,10 @@ mod tests {
             },
         );
         let reg = from_plugins(&plugins);
-        assert_eq!(reg.len(), 1);
+        // 7 built-ins are always present, plus the one enabled command tool.
+        assert_eq!(reg.len(), 8);
         assert!(reg.get("cmd_echo").is_ok());
+        assert!(reg.get("shell").is_ok());
         assert!(matches!(
             reg.get("cmd_echo").unwrap().executor,
             ToolExecutor::Command(_)

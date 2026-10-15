@@ -148,6 +148,27 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            // ---- built-in tools ---------------------------------------------
+            ui.label(RichText::new("Built-in tools").color(theme::text()).strong());
+            ui.small("Always on. Mutating tools ask for your approval before running.");
+            for tool in harness_core::builtins::BuiltinTool::all() {
+                let def = tool.def();
+                let policy = if tool.needs_approval() {
+                    "approval"
+                } else {
+                    "auto"
+                };
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(def.name.as_str()).monospace().strong());
+                    ui.small(def.description);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.small(policy);
+                    });
+                });
+            }
+            ui.add_space(8.0);
+            ui.separator();
+
             // ---- credentials ------------------------------------------------
             ui.label(RichText::new("DeepSeek API key").color(theme::text()).strong());
             ui.label(

@@ -137,6 +137,17 @@ async fn execute_tool(
     let name = call.function.name.clone();
     let registered = registry.get(&name)?;
     match &registered.executor {
+        ToolExecutor::Builtin(tool) => {
+            // Mutating built-ins (shell, write_file, edit_file) wait for the
+            // user's verdict; read-only ones run straight through.
+            if tool.needs_approval() {
+                let verdict = approvals.recv().await.unwrap_or(Approval::Reject);
+                if verdict == Approval::Reject {
+                    return Ok(format!("[user rejected running {name}]"));
+                }
+            }
+            tool.run(&call.function.arguments).await
+        }
         ToolExecutor::Command(tool) => {
             // Wait for the user's verdict; a closed channel means "reject".
             let verdict = approvals.recv().await.unwrap_or(Approval::Reject);
@@ -419,6 +430,58 @@ mod tests {
         assert!(execute_tool(&registry, &mcp, &call("nope", "{}"), &mut rx)
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn builtin_shell_runs_only_after_approval() {
+        let registry = ToolRegistry::new();
+        let mcp = no_mcp();
+        let (tx, mut rx) = approval_channel();
+        tx.send(Approval::Approve).await.unwrap();
+        let out = execute_tool(&registry, &mcp, &call("shell", r#"{"command":"echo builtin-ok"}"#), &mut rx)
+            .await
+            .unwrap();
+        assert_eq!(out.trim(), "builtin-ok");
+    }
+
+    #[tokio::test]
+    async fn builtin_read_runs_without_approval() {
+        let registry = ToolRegistry::new();
+        let mcp = no_mcp();
+        let (_tx, mut rx) = approval_channel(); // never answered
+        let dir = std::env::temp_dir().join("agent-builtin-test");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let file = dir.join("x.txt");
+        tokio::fs::write(&file, "hello\n").await.unwrap();
+        let out = execute_tool(
+            &registry,
+            &mcp,
+            &call("read_file", &format!(r#"{{"path":"{}"}}"#, file.display())),
+            &mut rx,
+        )
+        .await
+        .unwrap();
+        assert!(out.contains("hello"), "{out}");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn builtin_write_is_gated() {
+        let registry = ToolRegistry::new();
+        let mcp = no_mcp();
+        let (tx, mut rx) = approval_channel();
+        tx.send(Approval::Reject).await.unwrap();
+        let out = execute_tool(
+            &registry,
+            &mcp,
+            &call("write_file", r#"{"path":"/tmp/should-not-exist-aura","content":"x"}"#),
+            &mut rx,
+        )
+        .await
+        .unwrap();
+        assert!(out.contains("rejected"), "{out}");
+        assert!(!std::path::Path::new("/tmp/should-not-exist-aura").exists());
     }
 
     #[tokio::test]
