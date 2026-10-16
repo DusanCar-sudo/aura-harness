@@ -4,7 +4,7 @@
 //! writes (credentials 0600, config.toml, plugins.toml).
 
 use crate::theme;
-use harness_core::config::{Config, EffortChoice, ModelChoice, Plugins, ThemeChoice};
+use harness_core::config::{Config, EffortChoice, Plugins, ThemeChoice};
 use harness_core::provider::{KNOWN_PROVIDERS, base_url_for, get_api_key_for_model};
 use egui::{RichText, Ui};
 
@@ -209,10 +209,18 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
                 egui::ComboBox::from_id_salt("cfg-theme")
                     .selected_text(state.config.theme.label())
                     .show_ui(ui, |ui| {
+                        // Nine palettes; hover one for what it promises.
                         for choice in ThemeChoice::all() {
-                            ui.selectable_value(&mut state.config.theme, choice, choice.label());
+                            ui.selectable_value(&mut state.config.theme, choice, choice.label())
+                                .on_hover_text(choice.hint());
                         }
                     });
+                ui.small(if state.config.theme.is_dark() {
+                    "dark"
+                } else {
+                    "light"
+                })
+                .on_hover_text("whether the palette is drawn for a dark or light surface");
                 // A live swatch of the theme's own colours.
                 let p = crate::theme::palette_for(state.config.theme);
                 for color in [p.bg, p.panel, p.accent, p.stripes[1], p.text] {
@@ -480,13 +488,6 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
     action
 }
 
-fn model_label(m: ModelChoice) -> &'static str {
-    match m {
-        ModelChoice::Flash => "deepseek-flash",
-        ModelChoice::V4Pro => "deepseek-v4-pro",
-    }
-}
-
 fn effort_label(e: EffortChoice) -> &'static str {
     match e {
         EffortChoice::None => "thinking off",
@@ -521,7 +522,7 @@ mod tests {
 
     #[test]
     fn labels_are_stable() {
-        assert_eq!(model_label(ModelChoice::V4Pro), "deepseek-v4-pro");
         assert_eq!(effort_label(EffortChoice::Max), "max");
+        assert_eq!(effort_label(EffortChoice::None), "thinking off");
     }
 }

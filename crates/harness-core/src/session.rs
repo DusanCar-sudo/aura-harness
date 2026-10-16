@@ -116,7 +116,7 @@ impl Session {
                 out.push(h);
             }
         }
-        out.sort_by(|a, b| b.created.cmp(&a.created));
+        out.sort_by_key(|h| std::cmp::Reverse(h.created));
         Ok(out)
     }
 

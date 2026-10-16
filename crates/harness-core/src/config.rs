@@ -28,6 +28,16 @@ pub struct Config {
     /// How much of the background image shows through the panels (0..=1).
     #[serde(default = "default_background_opacity")]
     pub background_opacity: f32,
+    /// Which right-panel tab was open last: "files", "preview" or "plugins".
+    #[serde(default)]
+    pub right_panel_tab: String,
+    /// The folder the file tree starts in, and therefore the project the
+    /// Preview tab looks for a build in. Empty means the process CWD.
+    #[serde(default)]
+    pub project_root: String,
+    /// List dotfiles and heavy folders in the file tree as well.
+    #[serde(default)]
+    pub show_hidden_files: bool,
     /// Full access: mutating tools (shell, write_file, edit_file, cmd_*)
     /// run without asking for approval first.
     #[serde(default = "default_auto_approve")]
@@ -71,6 +81,9 @@ impl Default for Config {
             theme: ThemeChoice::Nature,
             background_image: String::new(),
             background_opacity: default_background_opacity(),
+            right_panel_tab: "files".into(),
+            project_root: String::new(),
+            show_hidden_files: false,
             auto_approve: default_auto_approve(),
             system_prompt: String::new(),
             agentmem_mirror: true,
@@ -100,16 +113,31 @@ pub enum ThemeChoice {
     Retro,
     #[serde(rename = "paper")]
     Paper,
+    #[serde(rename = "ember")]
+    Ember,
+    #[serde(rename = "ocean")]
+    Ocean,
+    #[serde(rename = "dracula")]
+    Dracula,
+    #[serde(rename = "solarized")]
+    Solarized,
+    #[serde(rename = "graphite")]
+    Graphite,
 }
 
 impl ThemeChoice {
     /// Every theme, in the order the picker shows them.
-    pub fn all() -> [ThemeChoice; 4] {
+    pub fn all() -> [ThemeChoice; 9] {
         [
             ThemeChoice::Nature,
             ThemeChoice::Midnight,
             ThemeChoice::Retro,
             ThemeChoice::Paper,
+            ThemeChoice::Ember,
+            ThemeChoice::Ocean,
+            ThemeChoice::Dracula,
+            ThemeChoice::Solarized,
+            ThemeChoice::Graphite,
         ]
     }
 
@@ -120,7 +148,32 @@ impl ThemeChoice {
             ThemeChoice::Midnight => "Midnight",
             ThemeChoice::Retro => "Retro",
             ThemeChoice::Paper => "Paper",
+            ThemeChoice::Ember => "Ember",
+            ThemeChoice::Ocean => "Ocean",
+            ThemeChoice::Dracula => "Dracula",
+            ThemeChoice::Solarized => "Solarized",
+            ThemeChoice::Graphite => "Graphite",
         }
+    }
+
+    /// One-line promise of what the theme looks like (shown in the picker).
+    pub fn hint(self) -> &'static str {
+        match self {
+            ThemeChoice::Nature => "forest dark, gold accent",
+            ThemeChoice::Midnight => "cool navy, ice-blue accent",
+            ThemeChoice::Retro => "near-black, magenta accent",
+            ThemeChoice::Paper => "warm cream, brass accent",
+            ThemeChoice::Ember => "charcoal, ember-orange accent",
+            ThemeChoice::Ocean => "abyss teal, aqua accent",
+            ThemeChoice::Dracula => "aubergine, candy-pink accent",
+            ThemeChoice::Solarized => "solarized light, blue accent",
+            ThemeChoice::Graphite => "neutral light, steel accent",
+        }
+    }
+
+    /// True for the light themes (the picker groups them after the dark ones).
+    pub fn is_dark(self) -> bool {
+        !matches!(self, ThemeChoice::Solarized | ThemeChoice::Graphite)
     }
 }
 
@@ -609,10 +662,14 @@ mod tests {
         let mut c = Config::default();
         c.model = ModelChoice::V4Pro;
         c.system_prompt = "be brief".into();
+        c.show_hidden_files = true;
         c.save().unwrap();
         let loaded = Config::load().unwrap();
         assert_eq!(loaded.model, ModelChoice::V4Pro);
         assert_eq!(loaded.system_prompt, "be brief");
+        assert!(loaded.show_hidden_files, "hidden-files preference must survive a save/load");
+        // A config written before the key existed must default to off.
+        assert!(!Config::default().show_hidden_files);
         std::env::remove_var("AURA_HARNESS_HOME");
         std::fs::remove_dir_all(dir).unwrap();
     }

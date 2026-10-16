@@ -4,10 +4,21 @@ pub mod chat;
 pub mod filetree;
 pub mod input;
 pub mod plugin_browser;
+pub mod preview;
 pub mod settings;
 pub mod sidebar;
 
 use harness_core::agent::Approval;
+
+/// What the right-hand panel is showing. The preview lives in the same box as
+/// the file tree, one tab over, so a build can be watched where it is edited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RightTab {
+    #[default]
+    Files,
+    Preview,
+    Plugins,
+}
 
 /// A tool call rendered in the transcript, with its result once it lands.
 #[derive(Debug, Clone)]

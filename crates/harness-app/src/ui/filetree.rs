@@ -24,6 +24,12 @@ pub struct FileTreeState {
     pub deleting: Option<PathBuf>,
     /// Last filesystem error, shown under the tree.
     pub error: Option<String>,
+    /// Set when the user points the root at the current folder; the app
+    /// persists it and the Preview tab re-scans against it.
+    pub root_changed: bool,
+    /// List dotfiles and heavy folders too (target, node_modules). Build
+    /// outputs (dist, build) are always listed either way.
+    pub show_hidden: bool,
 }
 
 impl FileTreeState {
@@ -39,7 +45,15 @@ impl FileTreeState {
             creating: None,
             deleting: None,
             error: None,
+            root_changed: false,
+            show_hidden: false,
         }
+    }
+
+    /// Restore the persisted hidden-files preference.
+    pub fn with_hidden(mut self, show_hidden: bool) -> Self {
+        self.show_hidden = show_hidden;
+        self
     }
 
     fn base(&self) -> PathBuf {
@@ -102,12 +116,36 @@ impl FileTreeState {
             if ui.small_button("new dir").on_hover_text("Create a folder here").clicked() {
                 self.creating = Some((self.current.clone(), String::new(), true));
             }
+            if self.current != self.root
+                && ui
+                    .small_button("set root")
+                    .on_hover_text("Make this folder the project root — the Preview tab looks here for a build")
+                    .clicked()
+            {
+                self.root = self.current.clone();
+                self.root_changed = true;
+                self.expanded.clear();
+            }
         });
         ui.separator();
-        ui.add(
-            egui::TextEdit::singleline(&mut self.filter)
-                .hint_text("filter (name or path)"),
-        );
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.filter)
+                    .hint_text("filter (name or path)"),
+            );
+            if ui
+                .small_button(if self.show_hidden {
+                    "hidden: on"
+                } else {
+                    "hidden: off"
+                })
+                .on_hover_text("Also list dotfiles and heavy folders (target, node_modules)")
+                .clicked()
+            {
+                self.show_hidden = !self.show_hidden;
+                self.expanded.clear();
+            }
+        });
 
         self.show_dir(ui, self.current.clone(), 0, &self.filter.to_lowercase(), &mut clicked);
         self.show_editors(ui);
@@ -129,21 +167,7 @@ impl FileTreeState {
         if depth > self.max_depth {
             return;
         }
-        let mut entries: Vec<(PathBuf, bool)> = Vec::new();
-        if let Ok(it) = fs::read_dir(&dir) {
-            for e in it.flatten() {
-                let p = e.path();
-                let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                if should_skip(&name) { continue; }
-                let is_dir = p.is_dir();
-                entries.push((p, is_dir));
-            }
-        }
-        entries.sort_by(|a, b| match (a.1, b.1) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.0.cmp(&b.0),
-        });
+        let entries = list_dir(&dir, self.show_hidden);
 
         for (p, is_dir) in entries {
             let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -186,7 +210,8 @@ impl FileTreeState {
                 {
                     self.copy_path(ui, &p);
                 }
-                ui.menu_button("⋯", |ui| {
+                ui.menu_button("•••", |ui| {
+                    ui.small("Actions for this entry");
                     if ui.button("Copy path").clicked() {
                         self.copy_path(ui, &p);
                     }
@@ -331,22 +356,23 @@ impl FileTreeState {
     }
 }
 
-fn should_skip(name: &str) -> bool {
-    name.starts_with('.')
-        || name == "target"
-        || name == "node_modules"
-        || name == "dist"
-        || name == "build"
+fn should_skip(name: &str, show_hidden: bool) -> bool {
+    if show_hidden {
+        return false;
+    }
+    // `dist` and `build` are build outputs: the artifacts this workstation
+    // previews. Hiding them would hide exactly what the user came for.
+    name.starts_with('.') || name == "target" || name == "node_modules"
 }
 
-/// Convenience helper: return the list of (path, is_dir) one level deep (used by tests).
-pub fn list_dir(dir: &Path) -> Vec<(PathBuf, bool)> {
+/// One level of `dir` as (path, is_dir): noise skipped, folders first.
+pub fn list_dir(dir: &Path, show_hidden: bool) -> Vec<(PathBuf, bool)> {
     let mut out = Vec::new();
     if let Ok(it) = fs::read_dir(dir) {
         for e in it.flatten() {
             let p = e.path();
             let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            if should_skip(&name) { continue; }
+            if should_skip(&name, show_hidden) { continue; }
             out.push((p.clone(), p.is_dir()));
         }
     }
@@ -370,10 +396,20 @@ mod tests {
         std::fs::write(&tmp.join("src/main.rs"), "").unwrap();
         std::fs::create_dir(&tmp.join(".git")).unwrap();
         std::fs::create_dir(&tmp.join("target")).unwrap();
-        let listed = list_dir(&tmp);
+        // Build outputs are artifacts, so they must never be skipped.
+        std::fs::create_dir(&tmp.join("dist")).unwrap();
+        std::fs::create_dir(&tmp.join("build")).unwrap();
+        let listed = list_dir(&tmp, false);
         assert!(listed.iter().any(|(p, _)| p.ends_with("src")));
+        assert!(listed.iter().any(|(p, _)| p.ends_with("dist")));
+        assert!(listed.iter().any(|(p, _)| p.ends_with("build")));
         assert!(!listed.iter().any(|(p, _)| p.ends_with(".git")));
         assert!(!listed.iter().any(|(p, _)| p.ends_with("target")));
+        // Hidden mode lists everything, so no entry is ever unreachable.
+        let all = list_dir(&tmp, true);
+        assert!(all.iter().any(|(p, _)| p.ends_with(".git")));
+        assert!(all.iter().any(|(p, _)| p.ends_with("target")));
+        assert!(all.len() > listed.len());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

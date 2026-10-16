@@ -99,7 +99,7 @@ pub fn show(ui: &mut Ui, state: &mut BrowserState<'_>) -> Option<BrowserAction> 
     }
 
     // ---- local catalogue --------------------------------------------------
-    let local_hits: Vec<_> = catalog::search(&state.query)
+    let local_hits: Vec<_> = catalog::search(state.query)
         .into_iter()
         .filter(|e| !state.configured.contains(&catalog::plugin_key(e)))
         .collect();

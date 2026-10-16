@@ -116,12 +116,113 @@ const PAPER: Palette = Palette {
     dark: false,
 };
 
+
+const EMBER: Palette = Palette {
+    bg: rgb(0x0d, 0x0a, 0x09),
+    panel: rgb(0x16, 0x11, 0x0f),
+    card: rgb(0x1d, 0x17, 0x15),
+    field: rgb(0x10, 0x0c, 0x0b),
+    bubble: rgb(0x24, 0x1c, 0x19),
+    text: rgb(0xf4, 0xe7, 0xdd),
+    dim: rgb(0xa8, 0x91, 0x7f),
+    accent: rgb(0xff, 0x8b, 0x3d),
+    structure: rgb(0x4a, 0x36, 0x29),
+    on_accent: rgb(0x14, 0x0d, 0x08),
+    danger: rgb(0xff, 0x5f, 0x52),
+    warn: rgb(0xff, 0xb0, 0x2e),
+    ok: rgb(0x6c, 0xc0, 0x6a),
+    info: rgb(0x5a, 0xa8, 0xff),
+    stripes: [rgb(0xff, 0x5f, 0x52), rgb(0xff, 0xb0, 0x2e), rgb(0xff, 0x8b, 0x3d), rgb(0x5a, 0xa8, 0xff)],
+    dark: true,
+};
+
+const OCEAN: Palette = Palette {
+    bg: rgb(0x04, 0x12, 0x1a),
+    panel: rgb(0x0a, 0x1d, 0x27),
+    card: rgb(0x0f, 0x27, 0x33),
+    field: rgb(0x06, 0x16, 0x1e),
+    bubble: rgb(0x12, 0x32, 0x41),
+    text: rgb(0xdc, 0xf3, 0xf5),
+    dim: rgb(0x7f, 0xa5, 0xad),
+    accent: rgb(0x3f, 0xd6, 0xd0),
+    structure: rgb(0x1d, 0x4d, 0x59),
+    on_accent: rgb(0x04, 0x12, 0x1a),
+    danger: rgb(0xff, 0x6b, 0x6b),
+    warn: rgb(0xff, 0xcc, 0x66),
+    ok: rgb(0x4f, 0xe0, 0xa0),
+    info: rgb(0x57, 0xc7, 0xff),
+    stripes: [rgb(0xff, 0x6b, 0x6b), rgb(0xff, 0xcc, 0x66), rgb(0x4f, 0xe0, 0xa0), rgb(0x57, 0xc7, 0xff)],
+    dark: true,
+};
+
+const DRACULA: Palette = Palette {
+    bg: rgb(0x17, 0x14, 0x21),
+    panel: rgb(0x1e, 0x1a, 0x2b),
+    card: rgb(0x26, 0x21, 0x36),
+    field: rgb(0x14, 0x11, 0x19),
+    bubble: rgb(0x2e, 0x28, 0x42),
+    text: rgb(0xf2, 0xec, 0xff),
+    dim: rgb(0x9d, 0x93, 0xb8),
+    accent: rgb(0xff, 0x79, 0xc6),
+    structure: rgb(0x45, 0x3d, 0x61),
+    on_accent: rgb(0x17, 0x0f, 0x1a),
+    danger: rgb(0xff, 0x55, 0x55),
+    warn: rgb(0xf1, 0xfa, 0x8c),
+    ok: rgb(0x50, 0xfa, 0x7b),
+    info: rgb(0x8b, 0xe9, 0xfd),
+    stripes: [rgb(0xff, 0x55, 0x55), rgb(0xf1, 0xfa, 0x8c), rgb(0x50, 0xfa, 0x7b), rgb(0x8b, 0xe9, 0xfd)],
+    dark: true,
+};
+
+const SOLARIZED: Palette = Palette {
+    bg: rgb(0xfd, 0xf6, 0xe3),
+    panel: rgb(0xee, 0xe8, 0xd5),
+    card: rgb(0xe4, 0xdd, 0xc8),
+    field: rgb(0xff, 0xfd, 0xf5),
+    bubble: rgb(0xdc, 0xd4, 0xbc),
+    text: rgb(0x36, 0x40, 0x4a),
+    dim: rgb(0x6c, 0x7a, 0x80),
+    accent: rgb(0x26, 0x8b, 0xd2),
+    structure: rgb(0xc9, 0xc0, 0xa6),
+    on_accent: rgb(0xfd, 0xf6, 0xe3),
+    danger: rgb(0xdc, 0x32, 0x2f),
+    warn: rgb(0xb5, 0x89, 0x00),
+    ok: rgb(0x85, 0x99, 0x00),
+    info: rgb(0x2a, 0xa1, 0x98),
+    stripes: [rgb(0xdc, 0x32, 0x2f), rgb(0xb5, 0x89, 0x00), rgb(0x85, 0x99, 0x00), rgb(0x26, 0x8b, 0xd2)],
+    dark: false,
+};
+
+const GRAPHITE: Palette = Palette {
+    bg: rgb(0xf2, 0xf3, 0xf5),
+    panel: rgb(0xe7, 0xe9, 0xec),
+    card: rgb(0xdf, 0xe1, 0xe5),
+    field: rgb(0xff, 0xff, 0xff),
+    bubble: rgb(0xd4, 0xd7, 0xdc),
+    text: rgb(0x1c, 0x1f, 0x23),
+    dim: rgb(0x5f, 0x66, 0x6e),
+    accent: rgb(0x2f, 0x6f, 0xeb),
+    structure: rgb(0xc2, 0xc6, 0xcc),
+    on_accent: rgb(0xff, 0xff, 0xff),
+    danger: rgb(0xd1, 0x24, 0x2f),
+    warn: rgb(0x9a, 0x67, 0x00),
+    ok: rgb(0x1a, 0x7f, 0x37),
+    info: rgb(0x09, 0x69, 0xda),
+    stripes: [rgb(0xd1, 0x24, 0x2f), rgb(0xbf, 0x87, 0x00), rgb(0x1a, 0x7f, 0x37), rgb(0x09, 0x69, 0xda)],
+    dark: false,
+};
+
 pub fn palette_for(choice: ThemeChoice) -> Palette {
     match choice {
         ThemeChoice::Nature => NATURE,
         ThemeChoice::Midnight => MIDNIGHT,
         ThemeChoice::Retro => RETRO,
         ThemeChoice::Paper => PAPER,
+        ThemeChoice::Ember => EMBER,
+        ThemeChoice::Ocean => OCEAN,
+        ThemeChoice::Dracula => DRACULA,
+        ThemeChoice::Solarized => SOLARIZED,
+        ThemeChoice::Graphite => GRAPHITE,
     }
 }
 
@@ -249,6 +350,11 @@ mod tests {
             (ThemeChoice::Midnight, MIDNIGHT),
             (ThemeChoice::Retro, RETRO),
             (ThemeChoice::Paper, PAPER),
+            (ThemeChoice::Ember, EMBER),
+            (ThemeChoice::Ocean, OCEAN),
+            (ThemeChoice::Dracula, DRACULA),
+            (ThemeChoice::Solarized, SOLARIZED),
+            (ThemeChoice::Graphite, GRAPHITE),
         ];
         for (i, (choice, p)) in all.iter().enumerate() {
             assert_eq!(palette_for(*choice), *p);
@@ -264,6 +370,23 @@ mod tests {
         }
         assert!(!PAPER.dark, "paper is the light theme");
         assert!(NATURE.dark);
+        assert!(!SOLARIZED.dark && !GRAPHITE.dark, "solarized/graphite are light");
+        // Every theme must carry all four brand stripes without repeats.
+        for (choice, p) in all {
+            for (i, a) in p.stripes.iter().enumerate() {
+                for (j, b) in p.stripes.iter().enumerate() {
+                    if i != j {
+                        assert_ne!(a, b, "{choice:?} stripe {i} equals {j}");
+                    }
+                }
+            }
+        }
+        // The light themes must stay readable: dark text, light background.
+        for (choice, p) in [(ThemeChoice::Solarized, SOLARIZED), (ThemeChoice::Graphite, GRAPHITE)] {
+            let sum = |c: Color32| c.r() as u32 + c.g() as u32 + c.b() as u32;
+            assert!(sum(p.text) < 400, "{choice:?} text too light");
+            assert!(sum(p.bg) > 600, "{choice:?} bg too dark");
+        }
     }
 
     #[test]
@@ -272,6 +395,8 @@ mod tests {
         assert_eq!(text(), NATURE.text);
 
         let ctx = egui::Context::default();
+        apply(&ctx, ThemeChoice::Dracula);
+        assert_eq!(text(), DRACULA.text);
         apply(&ctx, ThemeChoice::Paper);
         assert_eq!(text(), PAPER.text);
         assert_eq!(accent(), PAPER.accent);

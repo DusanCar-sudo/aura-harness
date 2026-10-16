@@ -327,12 +327,12 @@ pub fn stream_chat(
         let family = crate::provider::provider_family(model);
         if family == "Anthropic" || model.starts_with("claude/") {
             return crate::provider::stream_anthropic(
-                http, &api_key, base_url.as_deref(), messages, opts,
+                http, api_key, base_url.as_deref(), messages, opts,
             );
         }
         if family == "Google" || model.starts_with("gemini/") {
             return crate::provider::stream_google(
-                http, &api_key, base_url.as_deref(), messages, opts,
+                http, api_key, base_url.as_deref(), messages, opts,
             );
         }
     }

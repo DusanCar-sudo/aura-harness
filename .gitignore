@@ -1,2 +1,5 @@
 target/
 .summer/
+
+# local verification screenshots
+.artifacts/

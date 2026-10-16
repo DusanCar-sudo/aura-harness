@@ -4,6 +4,7 @@
 //! runtime; `harness-core` stays GUI-free and testable.
 
 mod markdown;
+mod preview;
 mod theme;
 mod ui;
 
@@ -27,7 +28,7 @@ use ui::input::{ComposerAction, ComposerState};
 use ui::plugin_browser::{BrowserAction, BrowserState};
 use ui::settings::{AvailableServer, SettingsAction, SettingsState};
 use ui::sidebar::{SidebarAction, SidebarState};
-use ui::ToolCard;
+use ui::{RightTab, ToolCard};
 
 /// Window icon, embedded so the binary is self-contained.
 const ICON_RGBA: &[u8] = include_bytes!("../../../assets/icon.rgba");
@@ -44,6 +45,9 @@ enum View {
     Chat,
     Settings,
 }
+
+/// A finished online search delivered on a channel: (query, entries, warning).
+type OnlineResult = (String, Vec<harness_core::online::OnlineEntry>, Option<String>);
 
 struct App {
     rt: tokio::runtime::Runtime,
@@ -97,21 +101,16 @@ struct App {
     /// Popup window state for the plugin browser.
     show_browser: bool,
     right_panel: bool,
+    right_tab: RightTab,
     file_tree: ui::filetree::FileTreeState,
-    current_dir: std::path::PathBuf,
+    preview: ui::preview::PreviewState,
     catalog_query: String,
     /// Launch line typed in the browser's manual field.
     browser_line: String,
     /// Live online search results (registry + GitHub).
     online: ui::plugin_browser::OnlineResults,
     /// Receives finished online searches: (query, entries, warning).
-    online_rx: Option<
-        std_mpsc::Receiver<(
-            String,
-            Vec<harness_core::online::OnlineEntry>,
-            Option<String>,
-        )>,
-    >,
+    online_rx: Option<std_mpsc::Receiver<OnlineResult>>,
     /// When the query last changed, for the search debounce.
     online_dirty_since: Option<std::time::Instant>,
     /// Receives the downloaded agenttool.sh directory.
@@ -131,6 +130,13 @@ impl App {
 
         let config = Config::load().unwrap_or_default();
         let auto_approve = config.auto_approve;
+        let project_root = config.project_root.trim().to_string();
+        let show_hidden = config.show_hidden_files;
+        let right_tab = match config.right_panel_tab.trim() {
+            "preview" => RightTab::Preview,
+            "plugins" => RightTab::Plugins,
+            _ => RightTab::Files,
+        };
         theme::apply(&cc.egui_ctx, config.theme);
         let plugins = config::with_default_plugins(Plugins::load().unwrap_or_default());
         let api_key = config::load_api_key();
@@ -183,8 +189,14 @@ impl App {
             bg_saved_auto_approve: false,
             show_browser: false,
             right_panel: true,
-            file_tree: ui::filetree::FileTreeState::new("."),
-            current_dir: std::path::PathBuf::from("."),
+            right_tab,
+            file_tree: ui::filetree::FileTreeState::new(if project_root.is_empty() {
+                std::path::PathBuf::from(".")
+            } else {
+                std::path::PathBuf::from(project_root)
+            })
+            .with_hidden(show_hidden),
+            preview: ui::preview::PreviewState::new(),
             catalog_query: String::new(),
             browser_line: String::new(),
             online: ui::plugin_browser::OnlineResults::default(),
@@ -712,6 +724,14 @@ impl App {
         }
     }
 
+    /// Drop one attachment. The composer only offers rows that exist, but a
+    /// stale index must never panic the frame.
+    fn remove_attachment(&mut self, i: usize) {
+        if i < self.attachments.len() {
+            self.attachments.remove(i);
+        }
+    }
+
     /// Pick text files and read them as prompt context.
     fn attach_files(&mut self) {
         let picked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -786,7 +806,20 @@ impl eframe::App for App {
         }
         // Persist background edits immediately (settings feels broken if a
         // restart silently drops the choice).
-        if self.bg_saved_image != self.config.background_image.trim().to_string()
+        let tab_now = match self.right_tab {
+            RightTab::Files => "files",
+            RightTab::Preview => "preview",
+            RightTab::Plugins => "plugins",
+        };
+        if tab_now != self.config.right_panel_tab.trim() {
+            self.config.right_panel_tab = tab_now.into();
+            let _ = self.config.save();
+        }
+        if self.file_tree.show_hidden != self.config.show_hidden_files {
+            self.config.show_hidden_files = self.file_tree.show_hidden;
+            let _ = self.config.save();
+        }
+        if self.bg_saved_image != self.config.background_image.trim()
             || (self.bg_saved_opacity - self.config.background_opacity).abs() > 0.001
             || self.bg_saved_auto_approve != self.config.auto_approve
         {
@@ -841,60 +874,89 @@ impl eframe::App for App {
             self.handle_sidebar(action);
         }
 
-        // Right-hand panel: file tree (attach files) + curated plugin browser.
+        // Right-hand panel: one box, three tabs — the file tree, the artifact
+        // preview of whatever is being built, and the curated plugin browser.
         if self.right_panel {
             let mut close_right = false;
             let mut clicked_add: Option<(String, String)> = None;
             let mut clicked_file: Option<std::path::PathBuf> = None;
             let configured: Vec<String> = self.plugins.mcp.keys().cloned().collect();
             let mut query_edit = self.catalog_query.clone();
+            let mut tab = self.right_tab;
+            let project_root = self.file_tree.root.clone();
             egui::SidePanel::right("right-panel")
                 .resizable(true)
-                .default_width(270.0)
-                .width_range(220.0..=420.0)
+                .default_width(340.0)
+                .width_range(260.0..=640.0)
                 .show(ctx, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("📁 Files  •  🔌 Plugins");
-                        if ui.small_button("✕").clicked() {
-                            close_right = true;
-                        }
-                    });
-                    ui.separator();
-                    egui::CollapsingHeader::new("Project files")
-                        .default_open(true)
-                        .show(ui, |ui| {
-                            if let Some(p) = self.file_tree.show(ui) {
-                                clicked_file = Some(p);
+                        ui.selectable_value(&mut tab, RightTab::Files, "📁 Files");
+                        ui.selectable_value(&mut tab, RightTab::Preview, "🖼 Preview");
+                        ui.selectable_value(&mut tab, RightTab::Plugins, "🔌 Plugins");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("✕").on_hover_text("Hide the panel").clicked() {
+                                close_right = true;
                             }
                         });
+                    });
                     ui.separator();
-                    ui.label("Plugin search");
-                    ui.text_edit_singleline(&mut query_edit);
-                    if query_edit.trim().len() < 2 {
-                        ui.small("Type to search (e.g. gaming, social media, 3d game, summertime)");
-                    } else {
-                        let hits = harness_core::catalog::search(&query_edit);
-                        if hits.is_empty() {
-                            ui.small("No matches.");
+                    match tab {
+                        RightTab::Files => {
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                egui::CollapsingHeader::new("Project files")
+                                    .default_open(true)
+                                    .show(ui, |ui| {
+                                        if let Some(p) = self.file_tree.show(ui) {
+                                            clicked_file = Some(p);
+                                        }
+                                    });
+                            });
                         }
-                        for e in hits {
-                            if configured.contains(&harness_core::catalog::plugin_key(e)) {
-                                continue;
-                            }
-                            ui.horizontal(|ui| {
-                                ui.add(egui::Label::new(e.name).truncate());
-                                if ui.small_button("Add").clicked() {
-                                    clicked_add = Some((e.name.to_string(), e.launch_line.to_string()));
+                        RightTab::Preview => {
+                            ui::preview::show(ui, ctx, &mut self.preview, &project_root);
+                        }
+                        RightTab::Plugins => {
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                ui.label("Plugin search");
+                                ui.text_edit_singleline(&mut query_edit);
+                                if query_edit.trim().len() < 2 {
+                                    ui.small(
+                                        "Type to search (e.g. gaming, social media, 3d game, summertime)",
+                                    );
+                                } else {
+                                    let hits = harness_core::catalog::search(&query_edit);
+                                    if hits.is_empty() {
+                                        ui.small("No matches.");
+                                    }
+                                    for e in hits {
+                                        if configured.contains(&harness_core::catalog::plugin_key(e)) {
+                                            continue;
+                                        }
+                                        ui.horizontal(|ui| {
+                                            ui.add(egui::Label::new(e.name).truncate());
+                                            if ui.small_button("Add").clicked() {
+                                                clicked_add = Some((
+                                                    e.name.to_string(),
+                                                    e.launch_line.to_string(),
+                                                ));
+                                            }
+                                        });
+                                    }
                                 }
                             });
                         }
                     }
                 });
-            });
+            self.right_tab = tab;
             self.catalog_query = query_edit;
             if close_right {
                 self.right_panel = false;
+            }
+            if self.file_tree.root_changed {
+                self.file_tree.root_changed = false;
+                self.config.project_root = self.file_tree.root.display().to_string();
+                let _ = self.config.save();
+                self.preview.force_rescan(&self.file_tree.root.clone());
             }
             if let Some(p) = clicked_file {
                 let hint = format!("@{}", p.display());
@@ -936,11 +998,7 @@ impl eframe::App for App {
                 Some(ComposerAction::Send) => self.send(ctx),
                 Some(ComposerAction::Stop) => self.stop(),
                 Some(ComposerAction::Attach) => self.attach_files(),
-                Some(ComposerAction::RemoveAttachment(i)) => {
-                    if i < self.attachments.len() {
-                        self.attachments.remove(i);
-                    }
-                }
+                Some(ComposerAction::RemoveAttachment(i)) => self.remove_attachment(i),
                 None => {}
             }
         }

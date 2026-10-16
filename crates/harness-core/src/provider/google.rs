@@ -123,7 +123,7 @@ async fn parse_frame(frame: &str, tx: &mpsc::Sender<Result<StreamEvent>>) {
                         }
                         if let Some(fc) = p.get("functionCall") {
                             let name = fc.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
-                            let id = fc.get("id").and_then(Value::as_str).map(|s| s.to_string()).unwrap_or_else(|| format!("call_{}", &name));
+                            let id = fc.get("id").and_then(Value::as_str).map(|s| s.to_string()).unwrap_or_else(|| format!("call_{}", name));
                             let _ = tx.send(Ok(StreamEvent::ToolCallStart { index: 0, id, name })).await;
                             let args = fc.get("args").map(|a| a.to_string()).unwrap_or_default();
                             if !args.is_empty() {
@@ -159,7 +159,7 @@ pub fn parse_gemini_frame(frame: &str) -> Vec<StreamEvent> {
                         }
                         if let Some(fc) = p.get("functionCall") {
                             let name = fc.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
-                            let id = fc.get("id").and_then(Value::as_str).map(|s| s.to_string()).unwrap_or_else(|| format!("call_{}", &name));
+                            let id = fc.get("id").and_then(Value::as_str).map(|s| s.to_string()).unwrap_or_else(|| format!("call_{}", name));
                             out.push(StreamEvent::ToolCallStart { index: 0, id, name });
                         }
                     }
