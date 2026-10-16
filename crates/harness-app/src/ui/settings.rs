@@ -166,6 +166,14 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
                     });
                 });
             }
+            ui.add_space(6.0);
+            ui.checkbox(
+                &mut state.config.auto_approve,
+                "Auto-approve tool calls (full access)",
+            );
+            ui.small(
+                "On: shell, write_file, edit_file and command tools run without asking.                  Off: every mutating tool shows an approve/reject card first.",
+            );
             ui.add_space(8.0);
             ui.separator();
 

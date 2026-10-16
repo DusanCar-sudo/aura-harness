@@ -28,6 +28,10 @@ pub struct Config {
     /// How much of the background image shows through the panels (0..=1).
     #[serde(default = "default_background_opacity")]
     pub background_opacity: f32,
+    /// Full access: mutating tools (shell, write_file, edit_file, cmd_*)
+    /// run without asking for approval first.
+    #[serde(default = "default_auto_approve")]
+    pub auto_approve: bool,
     #[serde(default)]
     pub system_prompt: String,
     /// Mirror session summaries to the shared AGENTMEM store (Aura memory layer).
@@ -67,6 +71,7 @@ impl Default for Config {
             theme: ThemeChoice::Nature,
             background_image: String::new(),
             background_opacity: default_background_opacity(),
+            auto_approve: default_auto_approve(),
             system_prompt: String::new(),
             agentmem_mirror: true,
         }
@@ -75,6 +80,12 @@ impl Default for Config {
 
 fn default_background_opacity() -> f32 {
     0.35
+}
+
+/// Default to full access: the agent runs tools without an approval prompt.
+/// Users who want the gate back can turn this off in Settings.
+fn default_auto_approve() -> bool {
+    true
 }
 
 /// Which look to wear. The palettes themselves live in the app crate.

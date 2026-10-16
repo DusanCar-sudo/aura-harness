@@ -93,6 +93,7 @@ struct App {
     /// Last background values written to disk.
     bg_saved_image: String,
     bg_saved_opacity: f32,
+    bg_saved_auto_approve: bool,
     /// Popup window state for the plugin browser.
     show_browser: bool,
     right_panel: bool,
@@ -129,6 +130,7 @@ impl App {
         let _ = config::ensure_templates();
 
         let config = Config::load().unwrap_or_default();
+        let auto_approve = config.auto_approve;
         theme::apply(&cc.egui_ctx, config.theme);
         let plugins = config::with_default_plugins(Plugins::load().unwrap_or_default());
         let api_key = config::load_api_key();
@@ -156,7 +158,7 @@ impl App {
             busy: false,
             events: None,
             approvals: None,
-            registry: ToolRegistry::new(),
+            registry: ToolRegistry::new(auto_approve),
             mcp: Arc::new(Mutex::new(BTreeMap::new())),
             mcp_status: Vec::new(),
             mcp_rx: None,
@@ -178,6 +180,7 @@ impl App {
             bg_blend_active: false,
             bg_saved_image: String::new(),
             bg_saved_opacity: -1.0,
+            bg_saved_auto_approve: false,
             show_browser: false,
             right_panel: true,
             file_tree: ui::filetree::FileTreeState::new("."),
@@ -193,7 +196,7 @@ impl App {
         };
         app.refresh_available();
 
-        app.registry = tools::from_plugins(&app.plugins);
+        app.registry = tools::from_plugins(&app.plugins, app.config.auto_approve);
         app.boot_mcp();
         app.boot_directory();
         app
@@ -285,7 +288,7 @@ impl App {
         self.mcp_rx = None;
 
         // Rebuild so a reconnect drops tools that disappeared.
-        self.registry = tools::from_plugins(&self.plugins);
+        self.registry = tools::from_plugins(&self.plugins, self.config.auto_approve);
         for tool in boot.tools {
             self.registry.register(tool);
         }
@@ -294,7 +297,7 @@ impl App {
     }
 
     fn reconnect(&mut self) {
-        self.registry = tools::from_plugins(&self.plugins);
+        self.registry = tools::from_plugins(&self.plugins, self.config.auto_approve);
         self.boot_mcp();
     }
 
@@ -785,9 +788,11 @@ impl eframe::App for App {
         // restart silently drops the choice).
         if self.bg_saved_image != self.config.background_image.trim().to_string()
             || (self.bg_saved_opacity - self.config.background_opacity).abs() > 0.001
+            || self.bg_saved_auto_approve != self.config.auto_approve
         {
             self.bg_saved_image = self.config.background_image.trim().to_string();
             self.bg_saved_opacity = self.config.background_opacity;
+            self.bg_saved_auto_approve = self.config.auto_approve;
             let _ = self.config.save();
         }
         if bg_on {
@@ -1076,18 +1081,45 @@ fn load_logo(ctx: &egui::Context) -> Option<egui::TextureHandle> {
 const BG_MAX_EDGE: u32 = 2048;
 const BG_MAX_PIXELS: u64 = 4_000_000;
 
+/// Resolve a possibly-relative path. A relative path is taken against $HOME so
+/// "./Pictures/x.png" works no matter where the process was launched from.
+fn resolve_path(path: &str) -> std::path::PathBuf {
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        return p.to_path_buf();
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let mut base = std::path::PathBuf::from(home);
+    // Strip a leading "./" so joining is a no-op for bare relative names.
+    if let Ok(stripped) = p.strip_prefix("./") {
+        base = base.join(stripped);
+    } else if let Ok(stripped) = p.strip_prefix("~/") {
+        base = base.join(stripped);
+    } else if path.starts_with('~') {
+        // "~/Pictures/x.png" — expand the tilde against $HOME.
+        let rest = path.trim_start_matches('~').trim_start_matches('/');
+        base = base.join(rest);
+    } else {
+        base = base.join(p);
+    }
+    base
+}
+
 fn load_img_texture(ctx: &egui::Context, path: &str) -> Result<egui::TextureHandle, String> {
+    let resolved = resolve_path(path);
+    let path = &resolved;
     // egui asserts (debug) / the GPU rejects textures past the device limit.
     let max_edge = ctx.input(|i| i.max_texture_side).min(BG_MAX_EDGE as usize).max(64) as u32;
-    let img = image::open(path).map_err(|e| format!("{path}: {e}"))?;
+    let img = image::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let (w, h) = (img.width(), img.height());
     let pixels = w as u64 * h as u64;
     if w == 0 || h == 0 {
-        return Err(format!("{path}: empty image"));
+        return Err(format!("{}: empty image", path.display()));
     }
     if pixels > BG_MAX_PIXELS * 4 {
         return Err(format!(
-            "{path}: {w}x{h} is too large for a background (limit {} px)",
+            "{}: {w}x{h} is too large for a background (limit {} px)",
+            path.display(),
             BG_MAX_PIXELS * 4
         ));
     }
@@ -1105,7 +1137,7 @@ fn load_img_texture(ctx: &egui::Context, path: &str) -> Result<egui::TextureHand
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         ctx.load_texture("aura-bg", color, egui::TextureOptions::LINEAR)
     }))
-    .map_err(|_| format!("{path}: GPU refused a {}x{} texture", size[0], size[1]))
+    .map_err(|_| format!("{}: GPU refused a {}x{} texture", path.display(), size[0], size[1]))
 }
 
 fn window_icon() -> egui::IconData {
@@ -1151,6 +1183,27 @@ mod tests {
     fn key_detection_ignores_whitespace() {
         assert!(!key_is_set("   "));
         assert!(key_is_set("sk-abc"));
+    }
+
+    #[test]
+    fn relative_background_paths_resolve_against_home() {
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(
+            resolve_path("./Pictures/x.png"),
+            std::path::PathBuf::from(&home).join("Pictures/x.png")
+        );
+        assert_eq!(
+            resolve_path("~/Pictures/y.png"),
+            std::path::PathBuf::from(&home).join("Pictures/y.png")
+        );
+        assert_eq!(
+            resolve_path("/abs/z.png"),
+            std::path::PathBuf::from("/abs/z.png")
+        );
+        assert_eq!(
+            resolve_path("wallpaper.png"),
+            std::path::PathBuf::from(&home).join("wallpaper.png")
+        );
     }
 
     #[test]

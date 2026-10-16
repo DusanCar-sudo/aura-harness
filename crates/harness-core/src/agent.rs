@@ -139,8 +139,10 @@ async fn execute_tool(
     match &registered.executor {
         ToolExecutor::Builtin(tool) => {
             // Mutating built-ins (shell, write_file, edit_file) wait for the
-            // user's verdict; read-only ones run straight through.
-            if tool.needs_approval() {
+            // user's verdict; read-only ones run straight through. In full
+            // access mode needs_approval() is false for every tool.
+            let gated = registry.needs_approval(&name).unwrap_or(false);
+            if gated {
                 let verdict = approvals.recv().await.unwrap_or(Approval::Reject);
                 if verdict == Approval::Reject {
                     return Ok(format!("[user rejected running {name}]"));
@@ -150,6 +152,10 @@ async fn execute_tool(
         }
         ToolExecutor::Command(tool) => {
             // Wait for the user's verdict; a closed channel means "reject".
+            // Full access mode skips the wait entirely.
+            if !registry.needs_approval(&name).unwrap_or(false) {
+                return crate::cmdtool::run(tool, &call.function.arguments).await;
+            }
             let verdict = approvals.recv().await.unwrap_or(Approval::Reject);
             if verdict == Approval::Reject {
                 return Ok(format!("[user rejected running {name}]"));
@@ -368,7 +374,7 @@ mod tests {
     }
 
     fn echo_registry() -> ToolRegistry {
-        let mut reg = ToolRegistry::new();
+        let mut reg = ToolRegistry::new(false);
         reg.register(RegisteredTool {
             def: ToolDef {
                 name: "cmd_echo".into(),
@@ -424,7 +430,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_tool_is_an_error() {
-        let registry = ToolRegistry::new();
+        let registry = ToolRegistry::new(false);
         let mcp = no_mcp();
         let (_tx, mut rx) = approval_channel();
         assert!(execute_tool(&registry, &mcp, &call("nope", "{}"), &mut rx)
@@ -434,7 +440,7 @@ mod tests {
 
     #[tokio::test]
     async fn builtin_shell_runs_only_after_approval() {
-        let registry = ToolRegistry::new();
+        let registry = ToolRegistry::new(false);
         let mcp = no_mcp();
         let (tx, mut rx) = approval_channel();
         tx.send(Approval::Approve).await.unwrap();
@@ -446,7 +452,7 @@ mod tests {
 
     #[tokio::test]
     async fn builtin_read_runs_without_approval() {
-        let registry = ToolRegistry::new();
+        let registry = ToolRegistry::new(false);
         let mcp = no_mcp();
         let (_tx, mut rx) = approval_channel(); // never answered
         let dir = std::env::temp_dir().join("agent-builtin-test");
@@ -468,7 +474,7 @@ mod tests {
 
     #[tokio::test]
     async fn builtin_write_is_gated() {
-        let registry = ToolRegistry::new();
+        let registry = ToolRegistry::new(false);
         let mcp = no_mcp();
         let (tx, mut rx) = approval_channel();
         tx.send(Approval::Reject).await.unwrap();
@@ -486,7 +492,7 @@ mod tests {
 
     #[tokio::test]
     async fn mcp_tool_without_connection_errors() {
-        let mut registry = ToolRegistry::new();
+        let mut registry = ToolRegistry::new(false);
         registry.register(RegisteredTool {
             def: ToolDef {
                 name: "mcp_ghost_ping".into(),

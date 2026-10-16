@@ -102,7 +102,7 @@ async fn runs_a_command_tool_and_answers_afterwards() {
             enabled: true,
         },
     );
-    let registry: ToolRegistry = tools::from_plugins(&plugins);
+    let registry: ToolRegistry = tools::from_plugins(&plugins, false);
     assert_eq!(registry.len(), 1);
 
     let (appr_tx, appr_rx) = agent::approval_channel();
