@@ -20,6 +20,10 @@ use tokio::sync::Mutex;
 
 const TIMEOUT: Duration = Duration::from_secs(90);
 
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max { s.to_string() } else { format!("{}…", &s[..max]) }
+}
+
 fn api_key() -> Option<String> {
     if let Ok(k) = std::env::var("DEEPSEEK_API_KEY") {
         if !k.trim().is_empty() {
@@ -103,7 +107,21 @@ async fn runs_a_command_tool_and_answers_afterwards() {
         },
     );
     let registry: ToolRegistry = tools::from_plugins(&plugins, false);
-    assert_eq!(registry.len(), 1);
+    // from_plugins starts at ToolRegistry::new(), so the built-ins travel with
+    // it; the plugin tool must land alongside them, not replace them.
+    let names: Vec<String> = registry
+        .definitions()
+        .iter()
+        .map(|d| d.name.clone())
+        .collect();
+    assert!(
+        names.contains(&"cmd_echo".to_string()),
+        "cmd_echo missing from {names:?}"
+    );
+    assert!(
+        names.contains(&"shell".to_string()),
+        "built-ins missing from {names:?}"
+    );
 
     let (appr_tx, appr_rx) = agent::approval_channel();
     let input = LoopInput {
@@ -133,20 +151,30 @@ async fn runs_a_command_tool_and_answers_afterwards() {
             match event {
                 LoopEvent::ToolRequested {
                     name,
+                    summary,
                     needs_approval,
                     ..
                 } => {
+                    eprintln!("[req #{requested}] {name} needs_approval={needs_approval} :: {summary}");
                     assert_eq!(name, "cmd_echo");
                     requested += 1;
                     if needs_approval {
                         appr_tx.send(Approval::Approve).await.unwrap();
                     }
                 }
-                LoopEvent::ToolFinished { output, .. } => tool_output = output,
+                LoopEvent::ToolFinished {
+                    output,
+                    is_error,
+                    ..
+                } => {
+                    eprintln!("[done] is_error={is_error} output={:?}", truncate(&output, 300));
+                    tool_output = output;
+                }
                 // Content arriving *after* the tool proves the follow-up
                 // request (the one carrying tool_calls) was accepted.
                 LoopEvent::Content(t) => answer.push_str(&t),
-                LoopEvent::Finished { .. } => {
+                LoopEvent::Finished { rounds } => {
+                    eprintln!("[finished] after {rounds} rounds");
                     finished = true;
                     break;
                 }
@@ -161,6 +189,7 @@ async fn runs_a_command_tool_and_answers_afterwards() {
         .await
         .expect("loop timed out");
 
+    eprintln!("final answer: {answer:?}");
     assert_eq!(requested, 1, "expected exactly one tool request");
     assert!(
         tool_output.contains("hello-aura"),
@@ -172,6 +201,120 @@ async fn runs_a_command_tool_and_answers_afterwards() {
         "final answer did not mention the tool output: {answer:?}"
     );
     eprintln!("tool round trip ok: {tool_output:?} -> {answer:?}");
+}
+
+/// The built-in tools are the harness's own tools (shell, read/write/edit,
+/// list, grep, glob). Under full access they must reach the model, run, and
+/// finish **without ever raising an approval** — that is the "no approval
+/// card" guarantee the UI's auto_approve flag promises.
+#[tokio::test]
+#[ignore = "hits the live API"]
+async fn runs_the_builtin_shell_tool_without_approval() {
+    let Some(key) = api_key() else {
+        eprintln!("skipping: no API key");
+        return;
+    };
+
+    // Same construction the app uses: built-ins first, plugins on top.
+    let registry: ToolRegistry = tools::from_plugins(&Plugins::default(), true);
+    let names: Vec<String> = registry
+        .definitions()
+        .iter()
+        .map(|d| d.name.clone())
+        .collect();
+    for builtin in ["shell", "read_file", "write_file", "edit_file", "list_files", "grep", "glob"] {
+        assert!(names.contains(&builtin.to_string()), "missing built-in {builtin}: {names:?}");
+    }
+
+    let (appr_tx, appr_rx) = agent::approval_channel();
+    let input = LoopInput {
+        http: reqwest::Client::new(),
+        api_key: key,
+        history: vec![Message::user(
+            "Use the shell tool exactly once to run `echo aura-builtin-ok`, then tell me exactly what it returned.",
+        )],
+        opts: ChatOptions::default(),
+        registry,
+        mcp: Arc::new(Mutex::new(Default::default())),
+        approvals: appr_rx,
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+    tokio::spawn(async move {
+        let _ = agent::run(input, tx).await;
+    });
+
+    let drive = async {
+        let mut requested = 0usize;
+        let mut approvals_needed = 0usize;
+        let mut tool_output = String::new();
+        let mut tool_error = false;
+        let mut answer = String::new();
+        let mut finished = false;
+
+        while let Some(event) = rx.recv().await {
+            match event {
+                LoopEvent::ToolRequested {
+                    name,
+                    summary,
+                    needs_approval,
+                    ..
+                } => {
+                    eprintln!(
+                        "[builtin req #{requested}] {name} needs_approval={needs_approval} :: {summary}"
+                    );
+                    assert_eq!(name, "shell", "expected the shell tool, got {name}");
+                    requested += 1;
+                    if needs_approval {
+                        approvals_needed += 1;
+                        // Answer anyway so a regression fails on the count
+                        // below instead of hanging until the timeout.
+                        appr_tx.send(Approval::Approve).await.unwrap();
+                    }
+                }
+                LoopEvent::ToolFinished {
+                    output,
+                    is_error,
+                    ..
+                } => {
+                    eprintln!("[builtin done] is_error={is_error} output={:?}", truncate(&output, 300));
+                    tool_output = output;
+                    tool_error = is_error;
+                }
+                LoopEvent::Content(t) => answer.push_str(&t),
+                LoopEvent::Finished { rounds } => {
+                    eprintln!("[builtin finished] after {rounds} rounds");
+                    finished = true;
+                    break;
+                }
+                LoopEvent::Failed(e) => panic!("loop failed: {e}"),
+                _ => {}
+            }
+        }
+        (requested, approvals_needed, tool_output, tool_error, answer, finished)
+    };
+
+    let (requested, approvals_needed, tool_output, tool_error, answer, finished) =
+        tokio::time::timeout(TIMEOUT, drive)
+            .await
+            .expect("loop timed out");
+
+    assert_eq!(requested, 1, "expected exactly one shell call");
+    assert_eq!(
+        approvals_needed, 0,
+        "full access must never raise an approval request"
+    );
+    assert!(!tool_error, "shell tool reported an error: {tool_output:?}");
+    assert!(
+        tool_output.contains("aura-builtin-ok"),
+        "shell output was {tool_output:?}"
+    );
+    assert!(finished, "loop never reported Finished");
+    assert!(
+        answer.contains("aura-builtin-ok"),
+        "final answer did not carry the tool output: {answer:?}"
+    );
+    eprintln!("builtin shell round trip ok: {tool_output:?} -> {answer:?}");
 }
 
 /// A bad key must surface as a typed API error, not a panic or a hang.
