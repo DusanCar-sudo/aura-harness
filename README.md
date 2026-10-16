@@ -51,6 +51,12 @@ from <https://platform.deepseek.com> and hit **Save key**; it is written to
 `~/.config/aura-harness/credentials` with mode `0600`. The app also accepts
 `DEEPSEEK_API_KEY` in the environment, which takes precedence.
 
+On Aura OS (sway) the window opens as a normal floating window, centered —
+not a full-screen tile. It carries the Wayland `app_id` `aura-harness`
+(matching the `.desktop` file's `StartupWMClass`) and the desktop floats it:
+
+    for_window [app_id="aura-harness"] floating enable, move position center
+
 ## Files
 
 | Path | Purpose |

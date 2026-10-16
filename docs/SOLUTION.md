@@ -97,6 +97,17 @@ cancel path — the agent's next `send` fails and the loop unwinds.
   `~/Downloads/Projects/aura-mnemai`, so Aura Code, Hermes *and* this app all
   failed with `No module named mnemai`. The launcher now searches
   `~/Downloads/Projects`, `~/Projects`, then `/mnt/agentmem/tools`.
+- **The window "maximised over the full screen".** Two causes. Under sway a
+  new window is a full-screen tile until something floats it — and the window
+  had no Wayland `app_id` for a rule to match, because eframe's
+  `run_native(app_name, …)` sets only the *title*. `main()` now sets
+  `.with_app_id("aura-harness")` (same string as the `.desktop` file's
+  `StartupWMClass`) and the desktop floats it with
+  `for_window [app_id="aura-harness"] floating enable, move position center`.
+  Verified live: it maps as `floating_con`, centered, at its own 1320x820.
+  Corollary for whoever verifies the UI next: capture the window region
+  (`grim -g "x,y WxH"`, rect from `swaymsg -t get_tree`), never fullscreen it
+  for a screenshot — that is what made it look maximised in the first place.
 
 ## Verifying
 
