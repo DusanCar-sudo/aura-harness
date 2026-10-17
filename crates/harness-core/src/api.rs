@@ -1,11 +1,19 @@
 //! DeepSeek chat-completions client (OpenAI-compatible) with SSE streaming.
 
+use std::time::Duration;
+
 use crate::error::{Error, Result};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tokio::time::timeout;
 
 pub const API_BASE: &str = "https://api.deepseek.com";
+
+/// Max silence between SSE chunks before the stream is declared dead.
+/// Generous: reasoning models pause between tokens, but servers send
+/// keepalives well inside this window.
+pub(crate) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Model {
@@ -342,9 +350,7 @@ pub fn stream_chat(
     let api_key = api_key.to_string();
     tokio::spawn(async move {
         let body = build_body(&messages, &opts);
-        let endpoint = reqwest::Url::parse(&format!("{API_BASE}/chat/completions")).unwrap();
         let base = opts.base_url.clone().unwrap_or_else(|| API_BASE.to_string());
-        let _ = endpoint; // silence unused
         let resp = http
             .post(format!("{}/chat/completions", base.trim_end_matches('/')))
             .bearer_auth(api_key)
@@ -366,7 +372,23 @@ pub fn stream_chat(
         }
         let mut stream = resp.bytes_stream();
         let mut buf = String::new();
-        while let Some(chunk) = stream.next().await {
+        loop {
+            let chunk = match timeout(STREAM_IDLE_TIMEOUT, stream.next()).await {
+                Ok(Some(c)) => c,
+                Ok(None) => break, // stream ended cleanly
+                Err(_elapsed) => {
+                    let _ = tx
+                        .send(Err(Error::Api {
+                            status: 0,
+                            message: format!(
+                                "stream idle for {}s — server stalled, connection dropped",
+                                STREAM_IDLE_TIMEOUT.as_secs()
+                            ),
+                        }))
+                        .await;
+                    return;
+                }
+            };
             let bytes = match chunk {
                 Ok(b) => b,
                 Err(e) => {

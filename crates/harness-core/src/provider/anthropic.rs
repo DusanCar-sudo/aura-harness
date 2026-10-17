@@ -93,7 +93,17 @@ pub fn stream_chat(
         use futures::StreamExt;
         let mut buf = String::new();
         loop {
-            match stream.next().await {
+            let next = match tokio::time::timeout(crate::api::STREAM_IDLE_TIMEOUT, stream.next()).await {
+                Ok(n) => n,
+                Err(_) => {
+                    let _ = tx.send(Err(Error::Api {
+                        status: 0,
+                        message: "stream idle for 90s — server stalled".into(),
+                    })).await;
+                    return;
+                }
+            };
+            match next {
                 Some(Ok(b)) => {
                     buf.push_str(&String::from_utf8_lossy(&b));
                     // SSE frames separated by blank lines.

@@ -1,8 +1,10 @@
 # Aura Harness — handoff (for Claude Code)
 
 A native **egui/eframe desktop AI workstation** in Rust. One binary, no
-browser, no Node server. Repo: `/mnt/bigdata/aura-harness` — local git only
-(**no remote**), master clean, v2 feature set complete and live-verified.
+browser, no Node server. Repo: `/mnt/bigdata/aura-harness` — public at
+**github.com/DusanCar-sudo/aura-harness** (pushed 2026-10-17; history was
+rewritten that day to purge `target/` blobs, so pre-rewrite hashes in older
+docs are stale), master clean, v2 feature set complete and live-verified.
 
 Read first: this file → `README.md` → `docs/SOLUTION.md` (decisions + traps).
 The v2 plan/spec live locally in `.summer/plans/` and `.summer/specs/`
@@ -103,7 +105,7 @@ pkill -f "release/aura-harness$"
 
 ## State
 
-v2 complete as of commit `69014ba` (universal config, provider routing,
+v2 complete as of commit `597aa68` (universal config, provider routing,
 catalog + search, right panel Files/Preview/Plugins, interactive file
 manager, background image, 9 themes, built-in tools, preview tab,
 floating-window fix). 131 tests + clippy clean; 4 ignored live API tests all
@@ -111,7 +113,9 @@ pass against the real API.
 
 Open items (priority order):
 
-1. API stream has no global timeout — a stalled response can hang a turn.
+1. DONE 2026-10-17: API streams now carry a 90s idle timeout in all three
+   transports (`api.rs` + `provider/{anthropic,google}.rs`) — a stalled
+   response errors out instead of hanging the turn.
 2. Game + Android preview paths are best-effort (only web is verified live;
    Android needs a device attached).
 3. Provider dispatch in `descriptors.rs` is hand-rolled — a cleanup pass
@@ -119,7 +123,9 @@ Open items (priority order):
 4. No UI-level end-to-end test of a chat→tool turn (loop level is covered by
    `live_deepseek.rs`).
 
-Repo is local-only: **no git remote, nothing pushed — ask before publishing.**
+Repo is public: **github.com/DusanCar-sudo/aura-harness** (published
+2026-10-17 with Dusan's approval). Secrets are kept out of the repo —
+credentials live in `~/.config/aura-harness/` only.
 
 Cross-agent context lives in `/mnt/agentmem/shared/` (bulletin:
 `agent-bulletin.txt`; project note: `aura-harness-project.md`). Keep this
