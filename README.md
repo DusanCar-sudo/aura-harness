@@ -9,8 +9,11 @@ direct access to your plugins (MCP servers and local command tools).
 ## What it is
 
 `aura-harness` is a native `egui`/`eframe` client that talks straight to the
-DeepSeek chat-completions API. It is independent: its own binary, its own
-config, its own sessions. It reaches the Aura memory layer the same way any
+DeepSeek chat-completions API — and, since v2, to many more providers
+(Anthropic, Google, xAI, OpenRouter, Qwen, Groq, Mistral, Cerebras, NVIDIA,
+MiniMax, Ollama/LM Studio, and any OpenAI-compatible endpoint), routed by
+model name. It is independent: its own binary, its own config, its own
+sessions. It reaches the Aura memory layer the same way any
 other agent does — by attaching the Mnemai MCP server as a plugin, not by
 sharing code with the TUI, web client, or Droid.
 
@@ -28,7 +31,12 @@ sharing code with the TUI, web client, or Droid.
     and every run shows an Approve/Reject card first
 - **Conversations** persisted as JSONL, listed in the sidebar, reloadable after
   a crash mid-stream
-- **Aura Nature** theming (forest / cream / gold / olive, stripe accents)
+- **9 themes** — Aura Nature (forest / cream / gold / olive) plus Midnight,
+  Retro, Paper, Ember, Ocean, Dracula, Solarized, Graphite — with an optional
+  background image behind the whole window
+- **v2 extras** — right panel with an interactive file tree, an artifact
+  preview tab (web / Android / game), a curated plugin catalog with semantic
+  search, and built-in tools (shell, files, grep) that need no plugin
 
 Out of scope for v1 (deliberately): subagents, jobs, workflows, presets, web
 search, account auth, voice.
@@ -37,7 +45,7 @@ search, account auth, voice.
 
 ```bash
 cargo build --release          # -> target/release/aura-harness
-cargo test  --workspace        # 54 tests
+cargo test  --workspace        # 131 tests
 ```
 
 ## Run
