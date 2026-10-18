@@ -21,7 +21,7 @@ The v2 plan/spec live locally in `.summer/plans/` and `.summer/specs/`
 
 ```bash
 cargo build --release                   # -> target/release/aura-harness
-cargo test --workspace                  # 131 tests (43 app + 86 core + 2 mnemai)
+cargo test --workspace                  # 132 tests (43 app + 87 core + 2 mnemai)
 cargo clippy --workspace --all-targets  # keep clean
 cargo test -p harness-core --test live_deepseek -- --ignored --nocapture
                                         # 4 live API tests; need DEEPSEEK_API_KEY
@@ -52,14 +52,16 @@ pkill -f "release/aura-harness$"
    then `grim -g "x,y WxH"`. Screenshots go to `.artifacts/` (gitignored).
 4. Single display (eDP-1) and Dusan is usually working on it — avoid opening
    test windows on his workspace; use a hidden workspace.
-5. **Never write `~/.config/aura-harness/config.toml` while an instance is
-   running** — the app auto-saves within a frame and your edit is silently
-   overwritten.
-6. `scripts/install.sh` is v1-era: it would install the stale Oct-12 ELF to
-   `~/.local/bin/aura-harness` and overwrite the hand-edited v2 desktop entry
-   (the one that execs `aura-harness-launch`) with a v1 one. Don't run it
-   blindly. The live path is: desktop entry → `~/.local/bin/aura-harness-launch`
-   → `target/release/aura-harness`.
+5. Editing `~/.config/aura-harness/config.toml` while an instance runs is now
+   survivable: `Config::save` is atomic (tmp+rename) and if the file changed
+   on disk since the app's last sync, the divergent copy is preserved as
+   `config.toml.conflict.bak` before the app's write lands. The app's own
+   values still win until restart.
+6. `scripts/install.sh` (fixed 2026-10-18) now installs the binary, generates
+   `~/.local/bin/aura-harness-launch` (Wayland env wrapper) and the v2 desktop
+   entry — matching the live setup, safe to run. The live launcher still execs
+   `target/release/aura-harness` directly; running install.sh switches it to
+   the installed copy.
 
 ## Config
 
@@ -110,6 +112,10 @@ catalog + search, right panel Files/Preview/Plugins, interactive file
 manager, background image, 9 themes, built-in tools, preview tab,
 floating-window fix). 131 tests + clippy clean; 4 ignored live API tests all
 pass against the real API.
+
+Layout: the egui render pass lives in `src/layout.rs` (`impl eframe::App`);
+`main.rs` holds state + event plumbing. Both under the 800-line ceiling;
+`preview.rs` (836 non-test lines) is marginally over but mostly tests.
 
 Open items (priority order):
 

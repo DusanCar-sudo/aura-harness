@@ -47,6 +47,11 @@ pub struct Config {
     /// Mirror session summaries to the shared AGENTMEM store (Aura memory layer).
     #[serde(default)]
     pub agentmem_mirror: bool,
+    /// Exact bytes of config.toml as we last loaded or wrote them. If the
+    /// file on disk differs at save time, an external editor changed it
+    /// underneath us; keep a backup instead of silently overwriting.
+    #[serde(skip)]
+    pub disk_bytes: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -87,6 +92,7 @@ impl Default for Config {
             auto_approve: default_auto_approve(),
             system_prompt: String::new(),
             agentmem_mirror: true,
+            disk_bytes: String::new(),
         }
     }
 }
@@ -270,16 +276,31 @@ fn read_toml<T: for<'de> Deserialize<'de>>(path: &PathBuf) -> std::io::Result<Op
 
 impl Config {
     pub fn load() -> std::io::Result<Self> {
-        Ok(read_toml(&config_dir().join("config.toml"))?.unwrap_or_default())
+        let path = config_dir().join("config.toml");
+        let mut cfg: Self = read_toml(&path)?.unwrap_or_default();
+        cfg.disk_bytes = std::fs::read_to_string(&path).unwrap_or_default();
+        Ok(cfg)
     }
 
-    pub fn save(&self) -> std::io::Result<()> {
+    /// Atomically write the config, never silently clobbering an external
+    /// edit: if the file changed on disk since we last synced, the divergent
+    /// copy is preserved as `config.toml.conflict.bak` (latest one wins).
+    /// shortcut: external values are not merged back into memory — restart,
+    /// or re-apply them from the .bak, to pick them up.
+    pub fn save(&mut self) -> std::io::Result<()> {
         let dir = config_dir();
         std::fs::create_dir_all(&dir)?;
-        std::fs::write(
-            dir.join("config.toml"),
-            toml::to_string_pretty(self).map_err(|e| std::io::Error::other(e.to_string()))?,
-        )
+        let path = dir.join("config.toml");
+        let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+        if on_disk != self.disk_bytes && !on_disk.is_empty() {
+            std::fs::write(dir.join("config.toml.conflict.bak"), &on_disk)?;
+        }
+        let text = toml::to_string_pretty(self).map_err(|e| std::io::Error::other(e.to_string()))?;
+        let tmp = dir.join(".config.toml.tmp");
+        std::fs::write(&tmp, &text)?;
+        std::fs::rename(&tmp, &path)?;
+        self.disk_bytes = text;
+        Ok(())
     }
 }
 
@@ -593,7 +614,8 @@ pub fn ensure_templates() -> std::io::Result<()> {
         std::fs::write(&plugins_path, PLUGINS_TEMPLATE)?;
     }
     if !dir.join("config.toml").exists() {
-        Config::default().save()?;
+        let mut fresh = Config::default();
+        fresh.save()?;
     }
     Ok(())
 }
@@ -659,10 +681,12 @@ mod tests {
         let _lock = crate::env_lock::guard();
         let dir = std::env::temp_dir().join(format!("aura-harness-cfg-{}", uuid::Uuid::new_v4()));
         std::env::set_var("AURA_HARNESS_HOME", &dir);
-        let mut c = Config::default();
-        c.model = ModelChoice::V4Pro;
-        c.system_prompt = "be brief".into();
-        c.show_hidden_files = true;
+        let mut c = Config {
+            model: ModelChoice::V4Pro,
+            system_prompt: "be brief".into(),
+            show_hidden_files: true,
+            ..Config::default()
+        };
         c.save().unwrap();
         let loaded = Config::load().unwrap();
         assert_eq!(loaded.model, ModelChoice::V4Pro);
@@ -672,6 +696,31 @@ mod tests {
         assert!(!Config::default().show_hidden_files);
         std::env::remove_var("AURA_HARNESS_HOME");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn save_preserves_external_edit_as_conflict_backup() {
+        let _lock = crate::env_lock::guard();
+        let dir = std::env::temp_dir().join(format!("aura-harness-cfg-{}", uuid::Uuid::new_v4()));
+        std::env::set_var("AURA_HARNESS_HOME", &dir);
+
+        let mut c = Config { system_prompt: "mine".into(), ..Config::default() };
+        c.save().unwrap();
+
+        // External edit lands while the app holds its own snapshot.
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "system_prompt = \"edited externally\"\n").unwrap();
+
+        c.theme = ThemeChoice::Ember;
+        c.save().unwrap();
+
+        // Our save won, but the external edit survives in the backup.
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert!(on_disk.contains("ember"), "app save must land");
+        let bak = std::fs::read_to_string(dir.join("config.toml.conflict.bak")).unwrap();
+        assert!(bak.contains("edited externally"), "external edit must be backed up");
+
+        std::env::remove_var("AURA_HARNESS_HOME");
     }
 
     #[test]

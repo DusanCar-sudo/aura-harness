@@ -2,9 +2,9 @@
 Type=Application
 Version=1.0
 Name=Aura Harness
-GenericName=DeepSeek harness
-Comment=DeepSeek chat with streaming reasoning, markdown and plugins
-Exec=aura-harness
+GenericName=Universal AI agent
+Comment=Multi-provider AI workstation with universal config, plugins and chat
+Exec=aura-harness-launch
 Icon=aura-harness
 Terminal=false
 Categories=Development;Utility;
