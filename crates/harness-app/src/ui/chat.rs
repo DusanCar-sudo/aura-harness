@@ -48,6 +48,8 @@ impl LiveTurn {
 pub enum ChatAction {
     Approve(String),
     Reject(String),
+    /// Read an assistant answer aloud through the voice chain.
+    Speak(String),
 }
 
 pub struct ChatState<'a> {
@@ -71,7 +73,9 @@ pub fn show(ui: &mut Ui, state: &mut ChatState<'_>) -> Option<ChatAction> {
             }
 
             for msg in state.messages {
-                render_message(ui, state.cache, msg);
+                if let Some(a) = render_message(ui, state.cache, msg) {
+                    action = Some(a);
+                }
             }
 
             // Tool activity sits after the turn that requested it.
@@ -100,7 +104,27 @@ fn welcome(ui: &mut Ui) {
     });
 }
 
-fn render_message(ui: &mut Ui, cache: &mut egui_commonmark::CommonMarkCache, msg: &Message) {
+fn render_message(
+    ui: &mut Ui,
+    cache: &mut egui_commonmark::CommonMarkCache,
+    msg: &Message,
+) -> Option<ChatAction> {
+    let mut action = None;
+    // Drag-select copies (egui native); these buttons are the one-tap fallbacks.
+    ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+        if ui.small_button("copy").clicked() {
+            ui.ctx().copy_text(msg.content.clone());
+        }
+        if msg.role == "assistant"
+            && !msg.content.is_empty()
+            && ui
+                .small_button("speak")
+                .on_hover_text("Read this answer aloud")
+                .clicked()
+        {
+            action = Some(ChatAction::Speak(msg.content.clone()));
+        }
+    });
     match msg.role.as_str() {
         "user" => {
             egui::Frame::none()
@@ -135,6 +159,7 @@ fn render_message(ui: &mut Ui, cache: &mut egui_commonmark::CommonMarkCache, msg
         }
         _ => {}
     }
+    action
 }
 
 /// Dimmed, collapsed-by-default chain of thought.

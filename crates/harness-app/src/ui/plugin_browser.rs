@@ -22,7 +22,6 @@ pub enum BrowserAction {
     Analyze(String),
     /// Open an external URL in the system browser (directory entries).
     Open(String),
-    Close,
 }
 
 /// Live search results, owned by `main.rs` (which also owns the debounce).
@@ -50,22 +49,6 @@ pub struct BrowserState<'a> {
 pub fn show(ui: &mut Ui, state: &mut BrowserState<'_>) -> Option<BrowserAction> {
     let mut action = None;
 
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new("Add a plugin")
-                .color(theme::accent())
-                .strong()
-                .size(16.0),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("Close").clicked() {
-                action = Some(BrowserAction::Close);
-            }
-        });
-    });
-    theme::stripes(ui, ui.available_width().min(120.0));
-    ui.add_space(6.0);
-
     ui.add(
         egui::TextEdit::singleline(state.query)
             .hint_text("Search — game dev, memory, fetch, github…")
@@ -85,6 +68,7 @@ pub fn show(ui: &mut Ui, state: &mut BrowserState<'_>) -> Option<BrowserAction> 
                 || s.summary().to_lowercase().contains(&q)
         })
         .collect();
+    let machine_empty = machine.is_empty();
     if !machine.is_empty() {
         ui.label(RichText::new("On this machine").color(theme::text()).strong());
         for server in machine {
@@ -103,6 +87,7 @@ pub fn show(ui: &mut Ui, state: &mut BrowserState<'_>) -> Option<BrowserAction> 
         .into_iter()
         .filter(|e| !state.configured.contains(&catalog::plugin_key(e)))
         .collect();
+    let local_empty = local_hits.is_empty();
     if !local_hits.is_empty() {
         ui.label(RichText::new("MCP servers").color(theme::text()).strong());
         for entry in local_hits {
@@ -127,6 +112,19 @@ pub fn show(ui: &mut Ui, state: &mut BrowserState<'_>) -> Option<BrowserAction> 
                 );
             }
         }
+        ui.add_space(6.0);
+    }
+
+    if q.is_empty() && machine_empty && local_empty {
+        ui.label(
+            RichText::new(
+                "Every curated server is already configured. Type two or more characters \
+                 to search the MCP registry and GitHub, or paste a launch command below.",
+            )
+            .color(theme::dim())
+            .italics()
+            .small(),
+        );
         ui.add_space(6.0);
     }
 
@@ -306,39 +304,33 @@ fn render_directory(
     }
 }
 
-/// One row with an Add button. Returns true when Add was hit.
+/// One row with an Add affordance. The whole line is clickable — the tiny
+/// right-hand button is only a hint, not the target.
 fn add_row(ui: &mut Ui, name: &str, detail: &str) -> bool {
-    let mut clicked = false;
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(name).color(theme::text()).monospace().small());
-        ui.label(RichText::new(detail).color(theme::dim()).small());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("Add").clicked() {
-                clicked = true;
-            }
-        });
-    });
+    let label = if detail.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name} — {detail}")
+    };
+    let row = crate::ui::row_button(ui, 24.0, false, &label, "+ Add");
+    let clicked = row.clicked();
+    row.on_hover_text(format!("{name}\n{detail}\nClick to add"));
     clicked
 }
 
-/// One row with an Open button (external link).
+/// One row with an Open affordance (external link), also fully clickable.
 fn open_row(ui: &mut Ui, name: &str, detail: &str, description: &str) -> bool {
-    let mut clicked = false;
-    ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            ui.label(RichText::new(name).color(theme::text()).monospace().small());
-            if !detail.is_empty() {
-                ui.label(RichText::new(detail).color(theme::structure()).small());
-            }
-            if !description.is_empty() {
-                ui.label(RichText::new(description).color(theme::dim()).small());
-            }
-        });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("Open").clicked() {
-                clicked = true;
-            }
-        });
+    let mut label = name.to_string();
+    if !detail.is_empty() {
+        label.push_str(" — ");
+        label.push_str(detail);
+    }
+    let row = crate::ui::row_button(ui, 24.0, false, &label, "Open");
+    let clicked = row.clicked();
+    row.on_hover_text(if description.is_empty() {
+        format!("{name}\n{detail}\nClick to open")
+    } else {
+        format!("{name}\n{detail}\n{description}\nClick to open")
     });
     clicked
 }

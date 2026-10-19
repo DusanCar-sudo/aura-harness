@@ -11,6 +11,7 @@ pub enum SidebarAction {
     NewSession,
     Open(String),
     Delete(String),
+    RenameRequest(String),
     OpenSettings,
     /// Switch theme from the sidebar picker.
     Theme(ThemeChoice),
@@ -76,8 +77,26 @@ pub fn show(ui: &mut Ui, state: &SidebarState<'_>) -> Option<SidebarAction> {
                 });
 
                 ui.horizontal(|ui| {
-                    if ui.selectable_label(selected, label).clicked() {
+                    let lbl = ui
+                        .selectable_label(selected, label)
+                        .on_hover_text("Click to open · double-click or ✎ to rename");
+                    // Double-click wins over the single-click open.
+                    if lbl.double_clicked() {
+                        action = Some(SidebarAction::RenameRequest(header.id.clone()));
+                    } else if lbl.clicked() {
                         action = Some(SidebarAction::Open(header.id.clone()));
+                    }
+                    if lbl.context_menu(|ui| {
+                        if ui.button("Rename").clicked() {
+                            action = Some(SidebarAction::RenameRequest(header.id.clone()));
+                            ui.close_menu();
+                        }
+                        if ui.button("Delete").clicked() {
+                            action = Some(SidebarAction::Delete(header.id.clone()));
+                            ui.close_menu();
+                        }
+                    }).is_some() {
+                        // menu opened; nothing else to do
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui
@@ -87,6 +106,13 @@ pub fn show(ui: &mut Ui, state: &SidebarState<'_>) -> Option<SidebarAction> {
                         {
                             action = Some(SidebarAction::Delete(header.id.clone()));
                         }
+                        if ui
+                            .small_button(RichText::new("✎").color(theme::dim()))
+                            .on_hover_text("Rename conversation")
+                            .clicked()
+                        {
+                            action = Some(SidebarAction::RenameRequest(header.id.clone()));
+                        }
                     });
                 });
             }
@@ -94,22 +120,25 @@ pub fn show(ui: &mut Ui, state: &SidebarState<'_>) -> Option<SidebarAction> {
 
     let mut pick = state.theme;
     ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
-        ui.add_space(6.0);
-        // Theme picker — the full set, one click from anywhere.
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Theme").color(theme::dim()).small());
+        // Line the footer up with the composer's Attach/Mic/Model/Effort row
+        // instead of gluing it to the window edge.
+        ui.add_space(28.0);
+        ui.spacing_mut().interact_size.y = 26.0;
+        ui.horizontal_wrapped(|ui| {
+            if ui.add_sized([82.0, 26.0], egui::Button::new("Settings")).clicked() {
+                action = Some(SidebarAction::OpenSettings);
+            }
+            // Theme sits next to Settings, at the same control height.
             egui::ComboBox::from_id_salt("sidebar-theme")
-                .selected_text(state.theme.label())
-                .width(120.0)
+                .selected_text(format!("Theme: {}", state.theme.label()))
+                .width(150.0)
                 .show_ui(ui, |ui| {
                     for choice in ThemeChoice::all() {
                         ui.selectable_value(&mut pick, choice, choice.label());
                     }
                 });
         });
-        if ui.button("Settings").clicked() {
-            action = Some(SidebarAction::OpenSettings);
-        }
+        ui.add_space(6.0);
         ui.separator();
         let color = if state.plugin_ok {
             theme::dim()

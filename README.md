@@ -19,9 +19,12 @@ sharing code with the TUI, web client, or Droid.
 
 ## Features
 
+- **Full model factory** — the same provider → model selector as the Aura Code
+  terminal: 32 providers and 157 curated models (including **DeepSeek V4.1
+  Flash 1017**), with live `/models` refresh for every provider that supports
+  it. OpenRouter shows its whole catalogue, not just one Claude entry.
 - **Streaming answers** with chain-of-thought shown live in a collapsible
-  "Thought for Ns" block (deepseek-flash / deepseek-v4-pro, thinking
-  off/low/high/max)
+  "Thought for Ns" block (thinking off/low/high/max)
 - **Rich markdown** — syntax-highlighted code blocks with a copy button
 - **Attachments** — pick text files (1 MiB each) and they ride along as context
 - **Plugins, immediately available**
@@ -30,7 +33,11 @@ sharing code with the TUI, web client, or Droid.
   - **Local command tools** (`cmd_<name>`) — argv only, never a shell string,
     and every run shows an Approve/Reject card first
 - **Conversations** persisted as JSONL, listed in the sidebar, reloadable after
-  a crash mid-stream
+  a crash mid-stream. New chats title themselves from the first prompt; rename
+  with the ✎ button, a double-click, or the right-click menu.
+- **Voice** — microphone button in the composer transcribes into the draft
+  (Xiaomi MiMo ASR → Groq Whisper → OpenAI Whisper → ElevenLabs), and every
+  assistant answer has a **speak** button (MiMo TTS → ElevenLabs → OpenAI).
 - **9 themes** — Aura Nature (forest / cream / gold / olive) plus Midnight,
   Retro, Paper, Ember, Ocean, Dracula, Solarized, Graphite — with an optional
   background image behind the whole window
@@ -38,14 +45,14 @@ sharing code with the TUI, web client, or Droid.
   preview tab (web / Android / game), a curated plugin catalog with semantic
   search, and built-in tools (shell, files, grep) that need no plugin
 
-Out of scope for v1 (deliberately): subagents, jobs, workflows, presets, web
-search, account auth, voice.
+Out of scope for now (deliberately): subagents, jobs, workflows, presets, web
+search, account auth.
 
 ## Build
 
 ```bash
 cargo build --release          # -> target/release/aura-harness
-cargo test  --workspace        # 131 tests
+cargo test  --workspace        # 105 unit/integration tests + live checks
 ```
 
 ## Run
@@ -54,10 +61,11 @@ cargo test  --workspace        # 131 tests
 ./target/release/aura-harness
 ```
 
-First run opens Settings, because there is no API key yet. Paste a DeepSeek key
-from <https://platform.deepseek.com> and hit **Save key**; it is written to
-`~/.config/aura-harness/credentials` with mode `0600`. The app also accepts
-`DEEPSEEK_API_KEY` in the environment, which takes precedence.
+The factory reads the same keys as Aura Code: `~/.aura/keys.json` (wins by
+default), then process environment, then `~/.aura/.env`, then the harness's own
+`~/.config/aura-harness/credentials`. `AURA_KEYS_ENV_WINS=1` restores
+environment-first order. The Settings sheet still accepts a DeepSeek fallback
+key and writes it to `credentials` with mode `0600`.
 
 On Aura OS (sway) the window opens as a normal floating window, centered —
 not a full-screen tile. It carries the Wayland `app_id` `aura-harness`
@@ -69,7 +77,7 @@ not a full-screen tile. It carries the Wayland `app_id` `aura-harness`
 
 | Path | Purpose |
 |------|---------|
-| `~/.config/aura-harness/config.toml` | model, reasoning effort, system prompt |
+| `~/.config/aura-harness/config.toml` | model, reasoning effort, system prompt, TTS voice |
 | `~/.config/aura-harness/plugins.toml` | MCP servers and command tools |
 | `~/.config/aura-harness/credentials` | `api_key=…`, mode `0600` |
 | `~/.local/share/aura-harness/sessions/<uuid>.jsonl` | one conversation per file |

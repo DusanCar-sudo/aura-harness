@@ -27,6 +27,10 @@ pub fn stream_chat(
         .model_name
         .clone()
         .unwrap_or_else(|| "claude-opus-4-5-20251001".to_string());
+    let model_name = model_name
+        .strip_prefix("anthropic/")
+        .unwrap_or(&model_name)
+        .to_string();
     let max_tokens = opts.max_tokens.unwrap_or(8192);
     let base_url = base_url.unwrap_or("https://api.anthropic.com").to_string();
     let http = http.clone();

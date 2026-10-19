@@ -145,14 +145,16 @@ impl BuiltinTool {
         }
     }
 
-    /// Execute with the raw JSON arguments the model produced.
-    pub async fn run(&self, arguments: &str) -> Result<String> {
+    /// Execute with the raw JSON arguments the model produced. Relative paths
+    /// and the shell resolve against `cwd`; an empty `cwd` means the process's.
+    pub async fn run(&self, arguments: &str, cwd: &Path) -> Result<String> {
         let args: Value = serde_json::from_str(arguments).unwrap_or(Value::Null);
         let get = |key: &str| args.get(key).and_then(Value::as_str);
         match self {
-            BuiltinTool::Shell => shell(get("command").unwrap_or("")).await,
+            BuiltinTool::Shell => shell(get("command").unwrap_or(""), cwd).await,
             BuiltinTool::ReadFile => {
                 read_file(
+                    cwd,
                     get("path").unwrap_or("."),
                     args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize,
                     args.get("limit").and_then(Value::as_u64).unwrap_or(usize::MAX as u64) as usize,
@@ -161,6 +163,7 @@ impl BuiltinTool {
             }
             BuiltinTool::WriteFile => {
                 write_file(
+                    cwd,
                     get("path").unwrap_or(""),
                     get("content").unwrap_or(""),
                 )
@@ -168,6 +171,7 @@ impl BuiltinTool {
             }
             BuiltinTool::EditFile => {
                 edit_file(
+                    cwd,
                     get("path").unwrap_or(""),
                     get("old_string").unwrap_or(""),
                     get("new_string").unwrap_or(""),
@@ -177,6 +181,7 @@ impl BuiltinTool {
             }
             BuiltinTool::ListFiles => {
                 list_files(
+                    cwd,
                     get("path").unwrap_or("."),
                     args.get("recursive").and_then(Value::as_bool).unwrap_or(false),
                 )
@@ -184,6 +189,7 @@ impl BuiltinTool {
             }
             BuiltinTool::Grep => {
                 grep(
+                    cwd,
                     get("pattern").unwrap_or(""),
                     get("path").unwrap_or("."),
                     get("glob"),
@@ -191,7 +197,7 @@ impl BuiltinTool {
                 .await
             }
             BuiltinTool::Glob => {
-                glob_files(get("pattern").unwrap_or(""), get("path").unwrap_or(".")).await
+                glob_files(cwd, get("pattern").unwrap_or(""), get("path").unwrap_or(".")).await
             }
         }
     }
@@ -205,14 +211,22 @@ fn child_command(prog: &str, args: &[&str]) -> tokio::process::Command {
     cmd
 }
 
+/// Resolve a model-supplied path: relative paths hang off `cwd`, absolute ones win.
+fn resolve(cwd: &Path, path: &str) -> std::path::PathBuf {
+    // `components()` drops interior `.`, so "." names the folder itself, not `<cwd>/.`.
+    cwd.join(path).components().collect()
+}
+
 /// Run a shell command through /bin/sh so pipes and redirects behave.
-pub async fn shell(command: &str) -> Result<String> {
-    let output = tokio::time::timeout(SHELL_TIMEOUT, async {
-        child_command("/bin/sh", &["-c", command]).output().await
-    })
-    .await
-    .map_err(|_| Error::Invalid("shell command timed out".into()))?
-    .map_err(|e| Error::Invalid(format!("shell: {e}")))?;
+pub async fn shell(command: &str, cwd: &Path) -> Result<String> {
+    let mut cmd = child_command("/bin/sh", &["-c", command]);
+    if !cwd.as_os_str().is_empty() {
+        cmd.current_dir(cwd);
+    }
+    let output = tokio::time::timeout(SHELL_TIMEOUT, cmd.output())
+        .await
+        .map_err(|_| Error::Invalid("shell command timed out".into()))?
+        .map_err(|e| Error::Invalid(format!("shell (in {}): {e}", cwd.display())))?;
 
     let mut out = String::from_utf8_lossy(&output.stdout).into_owned();
     if !output.stderr.is_empty() {
@@ -234,8 +248,9 @@ pub async fn shell(command: &str) -> Result<String> {
     Ok(out)
 }
 
-async fn read_file(path: &str, offset: usize, limit: usize) -> Result<String> {
-    let p = Path::new(path);
+async fn read_file(cwd: &Path, path: &str, offset: usize, limit: usize) -> Result<String> {
+    let p = resolve(cwd, path);
+    let p = p.as_path();
     if p.is_dir() {
         return Err(Error::Invalid(format!("{path} is a directory")));
     }
@@ -252,30 +267,31 @@ async fn read_file(path: &str, offset: usize, limit: usize) -> Result<String> {
     Ok(out)
 }
 
-async fn write_file(path: &str, content: &str) -> Result<String> {
+async fn write_file(cwd: &Path, path: &str, content: &str) -> Result<String> {
     if path.is_empty() {
         return Err(Error::Invalid("write_file needs a path".into()));
     }
-    let p = Path::new(path);
+    let p = resolve(cwd, path);
     if let Some(parent) = p.parent() {
         if !parent.as_os_str().is_empty() {
             tokio::fs::create_dir_all(parent).await.ok();
         }
     }
-    tokio::fs::write(p, content)
+    tokio::fs::write(&p, content)
         .await
         .map_err(|e| Error::Invalid(format!("write {path}: {e}")))?;
     Ok(format!("wrote {} bytes to {}", content.len(), path))
 }
 
-async fn edit_file(path: &str, old: &str, new: &str, replace_all: bool) -> Result<String> {
+async fn edit_file(cwd: &Path, path: &str, old: &str, new: &str, replace_all: bool) -> Result<String> {
     if path.is_empty() {
         return Err(Error::Invalid("edit_file needs a path".into()));
     }
     if old.is_empty() {
         return Err(Error::Invalid("old_string must not be empty".into()));
     }
-    let bytes = tokio::fs::read(path)
+    let full = resolve(cwd, path);
+    let bytes = tokio::fs::read(&full)
         .await
         .map_err(|e| Error::Invalid(format!("read {path}: {e}")))?;
     let text = String::from_utf8(bytes)
@@ -289,14 +305,15 @@ async fn edit_file(path: &str, old: &str, new: &str, replace_all: bool) -> Resul
     } else {
         text.replacen(old, new, 1)
     };
-    tokio::fs::write(path, replaced)
+    tokio::fs::write(&full, replaced)
         .await
         .map_err(|e| Error::Invalid(format!("write {path}: {e}")))?;
     Ok(format!("edited {path}: {count} occurrence(s) replaced"))
 }
 
-async fn list_files(path: &str, recursive: bool) -> Result<String> {
-    let root = Path::new(path);
+async fn list_files(cwd: &Path, path: &str, recursive: bool) -> Result<String> {
+    let root = resolve(cwd, path);
+    let root = root.as_path();
     if !root.exists() {
         return Err(Error::Invalid(format!("{path} does not exist")));
     }
@@ -378,9 +395,10 @@ fn glob_to_regex(pattern: &str) -> Result<regex::Regex> {
     regex::Regex::new(&re).map_err(|e| Error::Invalid(format!("glob {pattern}: {e}")))
 }
 
-async fn glob_files(pattern: &str, path: &str) -> Result<String> {
+async fn glob_files(cwd: &Path, pattern: &str, path: &str) -> Result<String> {
     let re = glob_to_regex(pattern)?;
-    let root = Path::new(path);
+    let root = resolve(cwd, path);
+    let root = root.as_path();
     let mut hits: Vec<String> = Vec::new();
     for entry in walkdir::WalkDir::new(root)
         .sort_by_file_name()
@@ -403,7 +421,7 @@ async fn glob_files(pattern: &str, path: &str) -> Result<String> {
     Ok(hits.join("\n"))
 }
 
-async fn grep(pattern: &str, path: &str, glob: Option<&str>) -> Result<String> {
+async fn grep(cwd: &Path, pattern: &str, path: &str, glob: Option<&str>) -> Result<String> {
     if pattern.is_empty() {
         return Err(Error::Invalid("grep needs a pattern".into()));
     }
@@ -414,14 +432,17 @@ async fn grep(pattern: &str, path: &str, glob: Option<&str>) -> Result<String> {
         None => None,
     };
     let mut hits: Vec<String> = Vec::new();
-    for entry in walkdir::WalkDir::new(path)
+    let root = resolve(cwd, path);
+    for entry in walkdir::WalkDir::new(&root)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
     {
         let s = entry.path().to_string_lossy();
         if let Some(g) = &glob_re {
-            if !g.is_match(&s) {
+            // Same rule as `glob`: the filter sees the path relative to the search root.
+            let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
+            if !g.is_match(&rel.to_string_lossy()) {
                 continue;
             }
         }
@@ -457,17 +478,59 @@ mod tests {
 
     #[tokio::test]
     async fn shell_runs_and_reports_exit() {
-        let out = shell("echo hello | tr a-z A-Z").await.unwrap();
+        let out = shell("echo hello | tr a-z A-Z", Path::new("")).await.unwrap();
         assert_eq!(out.trim(), "HELLO");
-        let bad = shell("exit 3").await.unwrap();
+        let bad = shell("exit 3", Path::new("")).await.unwrap();
         assert!(bad.contains("[exit code: 3]"));
+    }
+
+    #[tokio::test]
+    async fn shell_runs_in_the_given_folder() {
+        let dir = std::env::temp_dir().join("builtin-cwd-shell-test");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let out = shell("pwd", &dir).await.unwrap();
+        assert_eq!(out.trim(), dir.canonicalize().unwrap().to_str().unwrap());
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn file_tools_resolve_relative_paths_against_the_folder() {
+        let dir = std::env::temp_dir().join("builtin-cwd-files-test");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+
+        BuiltinTool::WriteFile
+            .run(r#"{"path":"site/index.html","content":"<h1>hi</h1>"}"#, &dir)
+            .await
+            .unwrap();
+        assert!(dir.join("site/index.html").is_file());
+
+        let read = BuiltinTool::ReadFile
+            .run(r#"{"path":"site/index.html"}"#, &dir)
+            .await
+            .unwrap();
+        assert!(read.contains("<h1>hi</h1>"), "{read}");
+
+        // Absolute paths still win over the folder.
+        let abs = dir.join("site/index.html");
+        let read_abs = BuiltinTool::ReadFile
+            .run(&format!(r#"{{"path":"{}"}}"#, abs.display()), Path::new("/nonexistent"))
+            .await
+            .unwrap();
+        assert!(read_abs.contains("<h1>hi</h1>"), "{read_abs}");
+
+        // An empty path must still be rejected, not silently become the folder.
+        let err = BuiltinTool::WriteFile.run(r#"{"content":"x"}"#, &dir).await;
+        assert!(err.is_err());
+        let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 
     #[tokio::test]
     async fn shell_sees_no_parent_secrets() {
         let _lock = crate::env_lock::guard();
         std::env::set_var("AURA_FAKE_SECRET", "sk-nope");
-        let out = shell("env").await.unwrap();
+        let out = shell("env", Path::new("")).await.unwrap();
         assert!(!out.contains("AURA_FAKE_SECRET"), "leaked:\n{out}");
         std::env::remove_var("AURA_FAKE_SECRET");
     }
@@ -479,12 +542,12 @@ mod tests {
         tokio::fs::create_dir_all(&dir).await.unwrap();
         let file = dir.join("a.txt");
 
-        write_file(file.to_str().unwrap(), "one\ntwo\nthree\n").await.unwrap();
-        let out = read_file(file.to_str().unwrap(), 0, 2).await.unwrap();
+        write_file(Path::new(""), file.to_str().unwrap(), "one\ntwo\nthree\n").await.unwrap();
+        let out = read_file(Path::new(""), file.to_str().unwrap(), 0, 2).await.unwrap();
         assert!(out.contains("one\ntwo"), "{out}");
 
-        edit_file(file.to_str().unwrap(), "two", "TWO", false).await.unwrap();
-        let after = read_file(file.to_str().unwrap(), 0, 10).await.unwrap();
+        edit_file(Path::new(""), file.to_str().unwrap(), "two", "TWO", false).await.unwrap();
+        let after = read_file(Path::new(""), file.to_str().unwrap(), 0, 10).await.unwrap();
         assert!(after.contains("TWO"), "{after}");
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
@@ -496,8 +559,8 @@ mod tests {
         let _ = tokio::fs::remove_dir_all(&dir).await;
         tokio::fs::create_dir_all(&dir).await.unwrap();
         let file = dir.join("a.txt");
-        write_file(file.to_str().unwrap(), "alpha").await.unwrap();
-        let err = edit_file(file.to_str().unwrap(), "zzz", "y", false).await;
+        write_file(Path::new(""), file.to_str().unwrap(), "alpha").await.unwrap();
+        let err = edit_file(Path::new(""), file.to_str().unwrap(), "zzz", "y", false).await;
         assert!(err.is_err());
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
@@ -507,17 +570,40 @@ mod tests {
         let dir = std::env::temp_dir().join("builtin-list-test");
         let _ = tokio::fs::remove_dir_all(&dir).await;
         tokio::fs::create_dir_all(dir.join("src")).await.unwrap();
-        write_file(dir.join("src/main.rs").to_str().unwrap(), "fn main() {}\n").await.unwrap();
-        write_file(dir.join("README.md").to_str().unwrap(), "# hi\n").await.unwrap();
+        write_file(Path::new(""), dir.join("src/main.rs").to_str().unwrap(), "fn main() {}\n").await.unwrap();
+        write_file(Path::new(""), dir.join("README.md").to_str().unwrap(), "# hi\n").await.unwrap();
 
-        let listing = list_files(dir.to_str().unwrap(), true).await.unwrap();
+        let listing = list_files(Path::new(""), dir.to_str().unwrap(), true).await.unwrap();
         assert!(listing.contains("main.rs") && listing.contains("README.md"), "{listing}");
 
-        let g = glob_files("src/*.rs", dir.to_str().unwrap()).await.unwrap();
+        let g = glob_files(Path::new(""), "src/*.rs", dir.to_str().unwrap()).await.unwrap();
         assert!(g.contains("main.rs"), "{g}");
 
-        let hits = grep("fn main", dir.to_str().unwrap(), None).await.unwrap();
+        let hits = grep(Path::new(""), "fn main", dir.to_str().unwrap(), None).await.unwrap();
         assert!(hits.contains("main.rs"), "{hits}");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn search_tools_work_from_the_project_folder() {
+        let dir = std::env::temp_dir().join(format!("builtin-cwd-search-{}", std::process::id()));
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        tokio::fs::create_dir_all(dir.join("src")).await.unwrap();
+        write_file(&dir, "src/main.rs", "fn main() {}\n").await.unwrap();
+
+        // "." is the folder itself: no `/./` in what the model sees.
+        let by_dot = grep(&dir, "fn main", ".", None).await.unwrap();
+        assert!(by_dot.contains("main.rs") && !by_dot.contains("/./"), "{by_dot}");
+        let globbed = glob_files(&dir, "src/*.rs", ".").await.unwrap();
+        assert!(globbed.contains("main.rs") && !globbed.contains("/./"), "{globbed}");
+
+        // The glob filter sees paths relative to the search root, as `glob` does.
+        let in_src = grep(&dir, "fn main", "src", Some("*.rs")).await.unwrap();
+        assert!(in_src.contains("main.rs"), "{in_src}");
+        let from_top = grep(&dir, "fn main", ".", Some("src/*.rs")).await.unwrap();
+        assert!(from_top.contains("main.rs"), "{from_top}");
+        let other_ext = grep(&dir, "fn main", ".", Some("**/*.md")).await.unwrap();
+        assert!(other_ext.contains("no matches"), "{other_ext}");
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 

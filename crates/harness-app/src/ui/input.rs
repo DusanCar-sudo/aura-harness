@@ -12,6 +12,17 @@ pub enum ComposerAction {
     Stop,
     Attach,
     RemoveAttachment(usize),
+    OpenModelFactory,
+    ToggleMic,
+}
+
+/// Microphone state shown in the composer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VoiceStatus {
+    #[default]
+    Idle,
+    Recording,
+    Transcribing,
 }
 
 pub struct ComposerState<'a> {
@@ -22,6 +33,10 @@ pub struct ComposerState<'a> {
     pub selected_model: Option<String>,
     pub busy: bool,
     pub tool_count: usize,
+    pub voice: VoiceStatus,
+    pub recording_secs: Option<f32>,
+    /// Put the caret in the text box this frame (launch, after Send/Stop, new chat).
+    pub request_focus: bool,
 }
 
 pub fn show(ui: &mut Ui, state: &mut ComposerState<'_>) -> Option<ComposerAction> {
@@ -52,6 +67,9 @@ pub fn show(ui: &mut Ui, state: &mut ComposerState<'_>) -> Option<ComposerAction
             .desired_rows(3)
             .desired_width(f32::INFINITY),
     );
+    if state.request_focus {
+        response.request_focus();
+    }
 
     // Enter sends; Shift+Enter inserts a newline.
     if response.has_focus() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter)) {
@@ -67,15 +85,31 @@ pub fn show(ui: &mut Ui, state: &mut ComposerState<'_>) -> Option<ComposerAction
             action = Some(ComposerAction::Attach);
         }
 
-        if let Some(model) = &state.selected_model {
-            ui.label(format!("Model: {}", model));
-        } else {
-            egui::ComboBox::from_id_salt("model-picker")
-                .selected_text(model_label(*state.model))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(state.model, ModelChoice::Flash, "deepseek-flash");
-                    ui.selectable_value(state.model, ModelChoice::V4Pro, "deepseek-v4-pro");
-                });
+        let mic_label = match state.voice {
+            VoiceStatus::Idle => "Mic".to_string(),
+            VoiceStatus::Recording => match state.recording_secs {
+                Some(secs) => format!("Stop mic {secs:.0}s"),
+                None => "Stop mic".to_string(),
+            },
+            VoiceStatus::Transcribing => "Transcribing…".to_string(),
+        };
+        if ui
+            .button(mic_label)
+            .on_hover_text("Record speech and put the transcription in the composer")
+            .clicked()
+            && state.voice != VoiceStatus::Transcribing
+        {
+            action = Some(ComposerAction::ToggleMic);
+        }
+
+        let current = state.selected_model.as_deref().unwrap_or_else(|| model_label(*state.model));
+        let current_name = harness_core::models::display_name(current);
+        if ui
+            .button(format!("Model: {current_name}"))
+            .on_hover_text(format!("{current}\nOpen the full provider → model factory"))
+            .clicked()
+        {
+            action = Some(ComposerAction::OpenModelFactory);
         }
 
         egui::ComboBox::from_id_salt("effort-picker")
@@ -169,6 +203,40 @@ mod tests {
         assert!(out.starts_with('…'));
         assert!(out.ends_with("notes.md"));
         assert_eq!(short_path("/tmp/x.txt"), "/tmp/x.txt");
+    }
+
+    /// Run one egui frame with the composer and report whether a widget holds focus.
+    fn composer_holds_focus_after_frame(request_focus: bool) -> bool {
+        let ctx = egui::Context::default();
+        let mut draft = String::new();
+        let mut model = ModelChoice::V4Pro;
+        let mut effort = EffortChoice::Max;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                show(
+                    ui,
+                    &mut ComposerState {
+                        draft: &mut draft,
+                        attachments: &[],
+                        model: &mut model,
+                        effort: &mut effort,
+                        selected_model: None,
+                        busy: false,
+                        tool_count: 0,
+                        voice: VoiceStatus::Idle,
+                        recording_secs: None,
+                        request_focus,
+                    },
+                );
+            });
+        });
+        ctx.memory(|m| m.focused().is_some())
+    }
+
+    #[test]
+    fn composer_takes_focus_only_when_asked() {
+        assert!(composer_holds_focus_after_frame(true));
+        assert!(!composer_holds_focus_after_frame(false));
     }
 
     #[test]

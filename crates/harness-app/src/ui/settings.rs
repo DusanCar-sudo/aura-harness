@@ -5,76 +5,8 @@
 
 use crate::theme;
 use harness_core::config::{Config, EffortChoice, Plugins, ThemeChoice};
-use harness_core::provider::{KNOWN_PROVIDERS, base_url_for, get_api_key_for_model};
+use harness_core::models;
 use egui::{RichText, Ui};
-
-/// One model offered by the universal multi-provider selector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KnownModel {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub family: &'static str,
-}
-
-/// Universal model catalogue (at least 30 entries) covering the major providers.
-pub const KNOWN_MODELS: &[KnownModel] = &[
-    // Anthropic / Claude (4)
-    KnownModel { id: "claude-opus-4", name: "Claude Opus 4", family: "anthropic" },
-    KnownModel { id: "claude-sonnet-4", name: "Claude Sonnet 4", family: "anthropic" },
-    KnownModel { id: "claude-3-7-sonnet", name: "Claude 3.7 Sonnet", family: "anthropic" },
-    KnownModel { id: "claude-3-5-haiku", name: "Claude 3.5 Haiku", family: "anthropic" },
-    // OpenAI (5)
-    KnownModel { id: "gpt-4o", name: "GPT-4o", family: "openai" },
-    KnownModel { id: "gpt-4o-mini", name: "GPT-4o mini", family: "openai" },
-    KnownModel { id: "gpt-4.1", name: "GPT-4.1", family: "openai" },
-    KnownModel { id: "o3", name: "o3", family: "openai" },
-    KnownModel { id: "o4-mini", name: "o4-mini", family: "openai" },
-    // Google (4)
-    KnownModel { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", family: "google" },
-    KnownModel { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", family: "google" },
-    KnownModel { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", family: "google" },
-    KnownModel { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", family: "google" },
-    // DeepSeek (3)
-    KnownModel { id: "deepseek-chat", name: "DeepSeek Chat", family: "deepseek" },
-    KnownModel { id: "deepseek-reasoner", name: "DeepSeek Reasoner", family: "deepseek" },
-    KnownModel { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", family: "deepseek" },
-    // xAI (2)
-    KnownModel { id: "grok-3", name: "Grok 3", family: "xai" },
-    KnownModel { id: "grok-2", name: "Grok 2", family: "xai" },
-    // Ollama (4)
-    KnownModel { id: "ollama/llama3.1", name: "Llama 3.1 (Ollama)", family: "ollama" },
-    KnownModel { id: "ollama/qwen2.5", name: "Qwen 2.5 (Ollama)", family: "ollama" },
-    KnownModel { id: "ollama/codellama", name: "CodeLlama (Ollama)", family: "ollama" },
-    KnownModel { id: "ollama/mistral", name: "Mistral (Ollama)", family: "ollama" },
-    // Others
-    KnownModel { id: "mistral/mistral-large", name: "Mistral Large", family: "mistral" },
-    KnownModel { id: "groq/llama-3.3-70b", name: "Llama 3.3 70B (Groq)", family: "groq" },
-    KnownModel { id: "qwen/qwen2.5", name: "Qwen 2.5", family: "qwen" },
-    KnownModel { id: "cerebras/llama3.1-8b", name: "Llama 3.1 8B (Cerebras)", family: "cerebras" },
-    KnownModel { id: "nvidia/llama-3.1", name: "Llama 3.1 (NVIDIA)", family: "nvidia" },
-    KnownModel { id: "minimax/minimax-m1", name: "MiniMax M1", family: "minimax" },
-    KnownModel { id: "openrouter/claude-3.5-sonnet", name: "Claude 3.5 Sonnet (OpenRouter)", family: "openrouter" },
-    KnownModel { id: "lmstudio/local", name: "Local model (LM Studio)", family: "lmstudio" },
-    KnownModel { id: "gpt-4.1-mini", name: "GPT-4.1 mini", family: "openai" },
-];
-
-pub fn providers_for_known_models() -> Vec<&'static str> {
-    let mut out: Vec<&'static str> = Vec::new();
-    for m in KNOWN_MODELS {
-        if !out.contains(&m.family) {
-            out.push(m.family);
-        }
-    }
-    out
-}
-
-pub fn models_for_provider(family: &str) -> Vec<&'static KnownModel> {
-    KNOWN_MODELS.iter().filter(|m| m.family == family).collect()
-}
-
-pub fn auto_base_url(model_id: &str) -> Option<String> {
-    base_url_for(model_id)
-}
 
 /// An MCP server found on this machine that is not yet configured here.
 #[derive(Debug, Clone)]
@@ -113,6 +45,8 @@ pub enum SettingsAction {
     SaveConfig,
     SavePlugins,
     Reconnect,
+    /// Open the full provider → model factory.
+    OpenModelFactory,
     /// Open the searchable plugin browser.
     OpenBrowser,
     RemoveServer(String),
@@ -178,12 +112,21 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
             ui.separator();
 
             // ---- credentials ------------------------------------------------
-            ui.label(RichText::new("DeepSeek API key").color(theme::text()).strong());
+            ui.label(RichText::new("API keys").color(theme::text()).strong());
+            ui.label(
+                RichText::new(
+                    "The factory reads ~/.aura/keys.json and ~/.aura/.env — the same keys \
+                     Aura Code uses. The field below is a DeepSeek fallback stored in \
+                     ~/.config/aura-harness/credentials (0600).",
+                )
+                .color(theme::dim())
+                .small(),
+            );
             ui.label(
                 RichText::new(if state.key_present {
-                    "A key is stored at ~/.config/aura-harness/credentials (0600)."
+                    "A fallback key is stored."
                 } else {
-                    "No key yet — paste one from platform.deepseek.com."
+                    "No fallback key stored. Keys from ~/.aura are enough for most providers."
                 })
                 .color(theme::dim())
                 .small(),
@@ -192,7 +135,7 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
                 ui.add(
                     egui::TextEdit::singleline(state.key_input)
                         .password(true)
-                        .hint_text("sk-…")
+                        .hint_text("sk-… (DeepSeek fallback)")
                         .desired_width(360.0),
                 );
                 if ui.button("Save key").clicked() {
@@ -271,51 +214,34 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
             } else {
                 ui.small("No background set. Pick a png/jpg/webp; it is drawn behind every panel.");
             }
-            // Ensure universal selector has a default model id.
+            // Ensure the universal selector always has a model id.
             if state.config.model_id.trim().is_empty() {
                 state.config.model_id = "deepseek-flash".to_string();
             }
+            let family = models::provider_for_model(&state.config.model_id);
+            let provider_name = models::provider(family).map(|p| p.name).unwrap_or(family);
             if state.config.base_url.is_none() {
-                state.config.base_url = base_url_for(&state.config.model_id);
+                state.config.base_url = harness_core::provider::base_url_for(&state.config.model_id);
             }
 
-            let current_family = KNOWN_MODELS
-                .iter()
-                .find(|m| m.id == state.config.model_id)
-                .map(|m| m.family)
-                .unwrap_or_else(|| {
-                    // Fall back to provider descriptor family when not in list.
-                    harness_core::provider::provider_family(&state.config.model_id)
-                });
-
+            ui.add_space(4.0);
+            ui.label(RichText::new("Model").color(theme::text()).strong());
             ui.horizontal(|ui| {
-                ui.label("Provider");
-                egui::ComboBox::from_id_salt("cfg-provider")
-                    .selected_text(current_family)
-                    .show_ui(ui, |ui| {
-                        for fam in providers_for_known_models() {
-                            if ui.selectable_label(current_family == fam, fam).clicked() {
-                                if let Some(first) = KNOWN_MODELS.iter().find(|m| m.family == fam) {
-                                    state.config.model_id = first.id.to_string();
-                                    state.config.base_url = auto_base_url(first.id);
-                                }
-                            }
-                        }
-                    });
-                ui.label("Model");
-                egui::ComboBox::from_id_salt("cfg-model")
-                    .selected_text(state.config.model_id.clone())
-                    .show_ui(ui, |ui| {
-                        for m in models_for_provider(current_family) {
-                            if ui
-                                .selectable_label(state.config.model_id == m.id, m.name)
-                                .clicked()
-                            {
-                                state.config.model_id = m.id.to_string();
-                                state.config.base_url = auto_base_url(m.id);
-                            }
-                        }
-                    });
+                ui.label(
+                    RichText::new(models::display_name(&state.config.model_id))
+                        .color(theme::accent())
+                        .strong(),
+                );
+                ui.label(
+                    RichText::new(format!("{} · {}", provider_name, state.config.model_id))
+                        .color(theme::dim())
+                        .small(),
+                );
+                if ui.button("Choose model…").clicked() {
+                    action = Some(SettingsAction::OpenModelFactory);
+                }
+            });
+            ui.horizontal(|ui| {
                 ui.label("Effort");
                 egui::ComboBox::from_id_salt("cfg-effort")
                     .selected_text(effort_label(state.config.reasoning_effort))
@@ -344,19 +270,16 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
             });
 
             // Show the auto-filled base URL for the selected model.
-            let _key = get_api_key_for_model(&state.config.model_id);
             let base = state
                 .config
                 .base_url
                 .clone()
-                .or_else(|| base_url_for(&state.config.model_id))
+                .or_else(|| harness_core::provider::base_url_for(&state.config.model_id))
                 .unwrap_or_default();
             ui.horizontal(|ui| {
                 ui.label("Base URL");
                 ui.label(RichText::new(base).color(theme::dim()).small());
             });
-            // Keep provider descriptor usage visible (no-op safety).
-            let _ = KNOWN_PROVIDERS.len();
 
             ui.label("System prompt");
             ui.add(
@@ -372,6 +295,44 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
             if ui.button("Save defaults").clicked() {
                 action = Some(SettingsAction::SaveConfig);
             }
+            ui.add_space(10.0);
+
+            // ---- voice ------------------------------------------------------
+            ui.separator();
+            ui.label(RichText::new("Voice").color(theme::text()).strong());
+            let stt = harness_core::voice::stt_providers();
+            let tts = harness_core::voice::tts_providers();
+            ui.label(
+                RichText::new(format!(
+                    "Speech to text: {}",
+                    if stt.is_empty() { "no provider key found".to_string() } else { stt.join(" → ") }
+                ))
+                .color(if stt.is_empty() { theme::warn() } else { theme::ok() })
+                .small(),
+            );
+            ui.label(
+                RichText::new(format!(
+                    "Text to speech: {}",
+                    if tts.is_empty() { "no provider key found".to_string() } else { tts.join(" → ") }
+                ))
+                .color(if tts.is_empty() { theme::warn() } else { theme::ok() })
+                .small(),
+            );
+            if !harness_core::voice::recorder_available() {
+                ui.label(RichText::new("No microphone recorder found — install pw-record or arecord.").color(theme::warn()).small());
+            }
+            if !harness_core::voice::player_available() {
+                ui.label(RichText::new("No audio player found — install ffplay, paplay or pw-play.").color(theme::warn()).small());
+            }
+            ui.horizontal(|ui| {
+                ui.label("TTS voice");
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.config.tts_voice)
+                        .hint_text("mimo_default, Mia, or an ElevenLabs id")
+                        .desired_width(260.0),
+                );
+            });
+            ui.small("Mic and speaker buttons live in the composer and on every assistant message.");
             ui.add_space(10.0);
 
             // ---- plugins ----------------------------------------------------

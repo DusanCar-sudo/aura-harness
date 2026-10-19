@@ -25,6 +25,8 @@ impl eframe::App for App {
         self.pump_online_search();
         self.pump_directory();
         self.pump_analyze(ctx);
+        self.pump_model_fetch(ctx);
+        self.pump_voice(ctx);
 
         // Repaint immediately when the theme picker moves, so it can be tried
         // before it is saved.
@@ -102,9 +104,15 @@ impl eframe::App for App {
             let blend = self.config.background_opacity.clamp(0.0, 1.0);
             let alpha = ((1.0 - blend) * 255.0).round() as u8;
             ctx.style_mut(|s| {
+                // Selecting text must always be possible; egui copies the
+                // selection to the clipboard on its own once these are on.
+                s.interaction.selectable_labels = true;
+                s.interaction.multi_widget_text_select = true;
                 let a = |c: egui::Color32| egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), alpha);
                 s.visuals.panel_fill = a(p.panel);
-                s.visuals.window_fill = a(p.card);
+                // Popups stay opaque: the model factory and plugin browser
+                // must be readable over a bright wallpaper.
+                s.visuals.window_fill = p.card;
                 s.visuals.faint_bg_color = a(p.card);
                 s.visuals.extreme_bg_color = a(p.field);
                 s.visuals.code_bg_color = a(p.field);
@@ -200,15 +208,20 @@ impl eframe::App for App {
                                         if configured.contains(&harness_core::catalog::plugin_key(e)) {
                                             continue;
                                         }
-                                        ui.horizontal(|ui| {
-                                            ui.add(egui::Label::new(e.name).truncate());
-                                            if ui.small_button("Add").clicked() {
-                                                clicked_add = Some((
-                                                    e.name.to_string(),
-                                                    e.launch_line.to_string(),
-                                                ));
-                                            }
-                                        });
+                                        let row = crate::ui::row_button(
+                                            ui,
+                                            24.0,
+                                            false,
+                                            &format!("{} — {}", e.name, e.description),
+                                            "+ Add",
+                                        );
+                                        if row.clicked() {
+                                            clicked_add = Some((
+                                                e.name.to_string(),
+                                                e.launch_line.to_string(),
+                                            ));
+                                        }
+                                        row.on_hover_text(format!("{}\n{}", e.name, e.description));
                                     }
                                 }
                             });
@@ -244,6 +257,7 @@ impl eframe::App for App {
             let mut composer_action = None;
             egui::TopBottomPanel::bottom("composer").show(ctx, |ui| {
                 ui.add_space(4.0);
+                let recording_secs = self.recording_secs();
                 composer_action = ui::input::show(
                     ui,
                     &mut ComposerState {
@@ -254,8 +268,14 @@ impl eframe::App for App {
                         selected_model: if self.config.model_id.trim().is_empty() { None } else { Some(self.config.model_id.trim().to_string()) },
                         busy: self.busy,
                         tool_count: self.registry.len(),
+                        voice: self.voice_status,
+                        recording_secs,
+                        request_focus: std::mem::take(&mut self.focus_composer),
                     },
                 );
+                if let Some(note) = &self.status {
+                    ui.label(egui::RichText::new(note).color(theme::ok()).small());
+                }
                 if let Some(err) = &self.error {
                     ui.colored_label(theme::danger(), err);
                 }
@@ -267,6 +287,8 @@ impl eframe::App for App {
                 Some(ComposerAction::Stop) => self.stop(),
                 Some(ComposerAction::Attach) => self.attach_files(),
                 Some(ComposerAction::RemoveAttachment(i)) => self.remove_attachment(i),
+                Some(ComposerAction::OpenModelFactory) => self.open_model_factory(),
+                Some(ComposerAction::ToggleMic) => self.toggle_mic(ctx),
                 None => {}
             }
         }
@@ -316,10 +338,47 @@ impl eframe::App for App {
         match chat_action {
             Some(ChatAction::Approve(id)) => self.decide(&id, Approval::Approve),
             Some(ChatAction::Reject(id)) => self.decide(&id, Approval::Reject),
+            Some(ChatAction::Speak(text)) => self.speak(text, ctx),
             None => {}
         }
         if let Some(action) = settings_action {
             self.apply_settings(action, ctx);
+        }
+
+        // Rename conversation: opened by right-clicking a chat in the sidebar.
+        if let Some(id) = self.renaming.clone() {
+            let mut open = true;
+            egui::Window::new("Rename chat")
+                .open(&mut open)
+                .default_width(320.0)
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    let response = egui::TextEdit::singleline(&mut self.rename_buf)
+                        .desired_width(280.0)
+                        .show(ui);
+                    if !response.response.has_focus() {
+                        response.response.request_focus();
+                    }
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Save").clicked()
+                            || (response.response.lost_focus()
+                                && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                        {
+                            if let Some(action) = self.take_rename(&id) {
+                                self.rename_session(&id, &action);
+                            }
+                            self.renaming = None;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.renaming = None;
+                        }
+                    });
+                });
+            if !open {
+                self.renaming = None;
+            }
         }
 
         // Plugin browser: a searchable window over catalogue + machine.
@@ -328,7 +387,10 @@ impl eframe::App for App {
             let configured: Vec<String> = self.plugins.mcp.keys().cloned().collect();
             egui::Window::new("Add a plugin")
                 .id(egui::Id::new("plugin-browser"))
-                .default_width(520.0)
+                .default_width(440.0)
+                .min_width(380.0)
+                .max_width(640.0)
+                .default_height(420.0)
                 .resizable(true)
                 .open(&mut self.show_browser)
                 .show(ctx, |ui| {
@@ -338,17 +400,22 @@ impl eframe::App for App {
                     if let Some(err) = &self.error {
                         ui.label(egui::RichText::new(err).color(theme::danger()).small());
                     }
-                    browser_action = ui::plugin_browser::show(
-                        ui,
-                        &mut BrowserState {
-                            query: &mut self.catalog_query,
-                            line: &mut self.browser_line,
-                            available: &self.available,
-                            configured: &configured,
-                            online: &self.online,
-                            directory: &self.directory,
-                        },
-                    );
+                    egui::ScrollArea::vertical()
+                        .max_height(440.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            browser_action = ui::plugin_browser::show(
+                                ui,
+                                &mut BrowserState {
+                                    query: &mut self.catalog_query,
+                                    line: &mut self.browser_line,
+                                    available: &self.available,
+                                    configured: &configured,
+                                    online: &self.online,
+                                    directory: &self.directory,
+                                },
+                            );
+                        });
                 });
             match browser_action {
                 Some(BrowserAction::Add { name, line }) => {
@@ -363,8 +430,30 @@ impl eframe::App for App {
                 Some(BrowserAction::Open(url)) => {
                     ctx.open_url(egui::OpenUrl::new_tab(url));
                 }
-                Some(BrowserAction::Close) => self.show_browser = false,
                 None => {}
+            }
+        }
+
+        // Model factory: the full Aura Code provider → model selector.
+        if self.model_factory.open {
+            let mut open = self.model_factory.open;
+            let mut factory_action = None;
+            let current_model = self.config.model_id.clone();
+            egui::Window::new("Model factory")
+                .id(egui::Id::new("model-factory"))
+                .default_width(900.0)
+                .default_height(620.0)
+                .min_width(660.0)
+                .max_width(1100.0)
+                .resizable(true)
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    factory_action =
+                        ui::model_factory::show(ui, &mut self.model_factory, &current_model);
+                });
+            self.model_factory.open = open;
+            if let Some(action) = factory_action {
+                self.apply_model_factory(action, ctx);
             }
         }
 

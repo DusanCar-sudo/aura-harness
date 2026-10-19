@@ -21,7 +21,7 @@ The v2 plan/spec live locally in `.summer/plans/` and `.summer/specs/`
 
 ```bash
 cargo build --release                   # -> target/release/aura-harness
-cargo test --workspace                  # 132 tests (43 app + 87 core + 2 mnemai)
+cargo test --workspace                  # 139 tests (46 app + 91 core + 2 mnemai)
 cargo clippy --workspace --all-targets  # keep clean
 cargo test -p harness-core --test live_deepseek -- --ignored --nocapture
                                         # 4 live API tests; need DEEPSEEK_API_KEY
@@ -67,7 +67,8 @@ pkill -f "release/aura-harness$"
 
 - `~/.config/aura-harness/config.toml` — theme, `right_panel_tab`,
   `project_root`, `show_hidden_files`, `auto_approve`, `background_image`,
-  `background_opacity`, `system_prompt`, `model_id`, `reasoning_effort`, …
+  `background_opacity`, `system_prompt`, `model_id`, `reasoning_effort`,
+  `tts_voice`, …
 - `~/.config/aura-harness/plugins.toml` — MCP servers + command tools.
 - Universal Aura config: `~/.aura/.env` (API keys) + `~/.aura/config.json`;
   `~/.aura/mcp.json` is shared with Aura Code. `AURA_HOME` overrides.
@@ -79,14 +80,48 @@ pkill -f "release/aura-harness$"
 
 - **Providers** (`harness-core/src/provider/descriptors.rs`): one descriptor
   table (`KNOWN_PROVIDERS`) drives routing, API-key env names, base URLs and
-  transport selection. 15 families (anthropic, openai, google, deepseek, xai,
-  openrouter, ollama, lmstudio, qwen, groq, mistral, cerebras, nvidia,
-  minimax, generic catch-all), 37 model prefixes. Three transports:
-  OpenAI-compatible, Anthropic, Google.
+  transport selection. 32 families ported from Aura Code (DeepSeek,
+  OpenRouter, Anthropic, OpenAI, Google, xAI, Qwen, MiniMax, Kimi, Zhipu,
+  Xiaomi, Groq, NVIDIA, FPT, BytePlus, Hugging Face, OpenCode, StepFun,
+  Tencent, Fireworks, Arcee, GMI, Kilo, Upstage, Alibaba, Cerebras,
+  SambaNova, Mistral, Together, Cohere, Ollama, LM Studio + generic), with
+  resellers ordered before the vendors they carry. Three transports:
+  OpenAI-compatible, Anthropic, Google. Chat bodies strip the factory routing
+  prefix (`openrouter/`, `fpt/`, …) before the wire.
+- **Model factory** (`harness-core/src/models.rs` + `ui/model_factory.rs`):
+  the full provider → model selector, 157 curated models including
+  `deepseek-flash` = **DeepSeek V4.1 Flash 1017**. Live `/models` refresh for
+  OpenAI-compatible providers, Anthropic, Google, OpenRouter, Ollama and LM
+  Studio; curated names are preferred for known live ids. Opened from the
+  composer's model button or Settings → Choose model.
+- **Voice** (`harness-core/src/voice.rs`): `Recorder` (`pw-record` → `parec`
+  → `arecord`, raw → ffmpeg WAV), STT chain MiMo ASR → Groq Whisper → OpenAI
+  Whisper → ElevenLabs, TTS chain MiMo TTS → ElevenLabs → OpenAI. Composer
+  **Mic** button transcribes into the draft; **speak** on assistant messages
+  plays the answer. TTS voice lives in `config.tts_voice` (default
+  `mimo_default`). Keys come from the same universal lookup as the factory.
+- **Chat titles**: new sessions title themselves from the first user prompt;
+  `repair_untitled_sessions()` migrates old "New chat" sessions at launch.
+  Rename via ✎, double-click, or right-click.
 - **Built-in tools** (`builtins.rs`): `shell`, `read_file`, `write_file`,
   `edit_file`, `list_files`, `grep`, `glob`. Registered in
   `ToolRegistry::new()` and **cannot be shadowed** by plugins/MCP. `shell`
   runs via `/bin/sh` (pipes/globs work), 120 s cap.
+- **Working directory**: `ToolRegistry` carries an explicit `cwd`
+  (`set_cwd`/`cwd()`); `send()` sets it to the file tree's root (made
+  absolute) and the built-ins resolve relative paths against it (`shell` via
+  `.current_dir`). Deliberately **not** `std::env::set_current_dir` — that is
+  process-global, races parallel tests and breaks a relative
+  `AURA_HARNESS_HOME`. A saved root that no longer exists is ignored (empty
+  cwd = the process's own folder). `cmdtool` command tools and MCP stdio
+  children do **not** get the cwd. The model is told its folder by a system
+  message rebuilt each send (`system_message` in `main.rs`, not stored in the
+  session); `grep`'s glob filter, like `glob`, sees paths relative to the
+  search root.
+- **Composer focus**: the text box takes focus once per `focus_composer`
+  (launch, after Send/Stop, New chat, opening a session) via
+  `ComposerState.request_focus`; the flag is consumed only when the composer
+  renders, so it survives the Settings view.
 - **Approval**: mutating tools are marked needs-approval, but `auto_approve`
   defaults **true** (full access) — that is what Dusan wants by default. Turn
   it off in Settings to get Approve/Reject cards.
@@ -110,8 +145,12 @@ pkill -f "release/aura-harness$"
 v2 complete as of commit `597aa68` (universal config, provider routing,
 catalog + search, right panel Files/Preview/Plugins, interactive file
 manager, background image, 9 themes, built-in tools, preview tab,
-floating-window fix). 131 tests + clippy clean; 4 ignored live API tests all
-pass against the real API.
+floating-window fix), plus the 2026-10-18 real-use fixes (composer focus,
+tool working directory) and the 2026-10-19 model-factory/voice pass.
+105 unit/integration tests; clippy shows only older warnings in
+tests/theme/filetree/preview. Live checks passed 2026-10-19: DeepSeek
+`/models` returns `deepseek-flash` + `deepseek-v4-pro`; OpenRouter returns
+400 models; MiMo TTS→ASR round trip is green.
 
 Layout: the egui render pass lives in `src/layout.rs` (`impl eframe::App`);
 `main.rs` holds state + event plumbing. Both under the 800-line ceiling;
@@ -126,8 +165,12 @@ Open items (priority order):
    Android needs a device attached).
 3. Provider dispatch in `descriptors.rs` is hand-rolled — a cleanup pass
    would reduce duplication across the three transports.
-4. No UI-level end-to-end test of a chat→tool turn (loop level is covered by
-   `live_deepseek.rs`).
+4. No automated UI-level end-to-end test of a chat→tool turn (loop level is
+   covered by `live_deepseek.rs`). Done by hand 2026-10-18: resume PDF →
+   portfolio site in a nested headless sway, run twice (22 tool rounds before
+   the cwd fix, 7 after; recipe in `docs/SOLUTION.md`).
+5. A turn that needs more than `MAX_TOOL_ROUNDS = 20` stops abruptly while
+   verifying; a "continue" affordance or a higher cap is undecided.
 
 Repo is public: **github.com/DusanCar-sudo/aura-harness** (published
 2026-10-17 with Dusan's approval). Secrets are kept out of the repo —

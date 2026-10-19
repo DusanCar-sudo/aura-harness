@@ -48,6 +48,12 @@ pub(crate) enum View {
 /// A finished online search delivered on a channel: (query, entries, warning).
 type OnlineResult = (String, Vec<harness_core::online::OnlineEntry>, Option<String>);
 
+/// A provider's live model answer: (provider id, models or error).
+type ModelFetchResult = (
+    String,
+    Result<Vec<harness_core::models::ModelInfo>, String>,
+);
+
 pub(crate) struct App {
     pub(crate) rt: tokio::runtime::Runtime,
     pub(crate) http: reqwest::Client,
@@ -60,9 +66,22 @@ pub(crate) struct App {
     pub(crate) session: Option<Session>,
 
     pub(crate) draft: String,
+    /// One-shot: the composer grabs keyboard focus on the next frame.
+    pub(crate) focus_composer: bool,
     pub(crate) attachments: Vec<Attachment>,
     pub(crate) model: ModelChoice,
     pub(crate) effort: EffortChoice,
+
+    /// Full provider → model factory, opened from the composer or Settings.
+    pub(crate) model_factory: ui::model_factory::ModelFactoryState,
+    pub(crate) model_fetch_rx: Option<std_mpsc::Receiver<ModelFetchResult>>,
+
+    /// Voice: microphone capture, transcription and speech playback.
+    pub(crate) voice_status: ui::input::VoiceStatus,
+    pub(crate) recorder: Option<harness_core::voice::Recorder>,
+    pub(crate) stt_rx: Option<std_mpsc::Receiver<Result<String, String>>>,
+    pub(crate) voice_result_rx: Option<std_mpsc::Receiver<Result<(), String>>>,
+    pub(crate) speaking: bool,
 
     pub(crate) live: LiveTurn,
     pub(crate) cards: Vec<ToolCard>,
@@ -99,6 +118,9 @@ pub(crate) struct App {
     pub(crate) bg_saved_auto_approve: bool,
     /// Popup window state for the plugin browser.
     pub(crate) show_browser: bool,
+    /// Right-click rename: the conversation being renamed and its edit buffer.
+    pub(crate) renaming: Option<String>,
+    pub(crate) rename_buf: String,
     pub(crate) right_panel: bool,
     pub(crate) right_tab: RightTab,
     pub(crate) file_tree: ui::filetree::FileTreeState,
@@ -126,6 +148,10 @@ impl App {
 
         // First run: drop a commented config + plugins file to edit.
         let _ = config::ensure_templates();
+
+        // Older builds created every chat as "New chat" and never titled it
+        // from the first prompt. Repair those sessions once, on launch.
+        repair_untitled_sessions();
 
         let config = Config::load().unwrap_or_default();
         let auto_approve = config.auto_approve;
@@ -155,9 +181,17 @@ impl App {
             sessions,
             session: None,
             draft: String::new(),
+            focus_composer: true,
             attachments: Vec::new(),
             model,
             effort,
+            model_factory: ui::model_factory::ModelFactoryState::default(),
+            model_fetch_rx: None,
+            voice_status: ui::input::VoiceStatus::Idle,
+            recorder: None,
+            stt_rx: None,
+            voice_result_rx: None,
+            speaking: false,
             live: LiveTurn::default(),
             cards: Vec::new(),
             busy: false,
@@ -187,6 +221,8 @@ impl App {
             bg_saved_opacity: -1.0,
             bg_saved_auto_approve: false,
             show_browser: false,
+            renaming: None,
+            rename_buf: String::new(),
             right_panel: true,
             right_tab,
             file_tree: ui::filetree::FileTreeState::new(if project_root.is_empty() {
@@ -244,6 +280,36 @@ impl App {
         }
         if self.session.as_ref().map(|s| s.header.id.as_str()) == Some(id) {
             self.session = None;
+        }
+        self.refresh_sessions();
+    }
+
+    /// Take the edited title out of the buffer, leaving it clean for next time.
+    fn take_rename(&mut self, _id: &str) -> Option<String> {
+        let title = self.rename_buf.trim().to_string();
+        self.rename_buf = String::new();
+        Some(title)
+    }
+
+    /// Rename a conversation on disk (header line) and, if open, in memory.
+    fn rename_session(&mut self, id: &str, title: &str) {
+        let title = title.trim();
+        if title.is_empty() {
+            return;
+        }
+        let path = sessions_dir().join(format!("{id}.jsonl"));
+        match Session::load(&path) {
+            Ok(mut session) => {
+                if let Err(e) = session.set_title(title).and_then(|_| session.save()) {
+                    self.error = Some(format!("could not rename conversation: {e}"));
+                }
+            }
+            Err(e) => self.error = Some(format!("could not rename conversation: {e}")),
+        }
+        if self.session.as_ref().map(|s| s.header.id.as_str()) == Some(id) {
+            if let Some(open) = self.session.as_mut() {
+                let _ = open.set_title(title);
+            }
         }
         self.refresh_sessions();
     }
@@ -456,6 +522,210 @@ impl App {
         format!("{} tools · {mcp_up}/{mcp_all} MCP servers", self.registry.len())
     }
 
+    // ---- model factory ----------------------------------------------------
+
+    /// Open the factory on the provider that owns the current model, and
+    /// start a live fetch when that provider is ready and not cached.
+    fn open_model_factory(&mut self) {
+        let model_id = if self.config.model_id.trim().is_empty() {
+            "deepseek-flash".to_string()
+        } else {
+            self.config.model_id.trim().to_string()
+        };
+        self.model_factory.open_for(&model_id);
+        self.maybe_fetch_selected_model_provider();
+    }
+
+    fn maybe_fetch_selected_model_provider(&mut self) {
+        let id = self.model_factory.selected_provider.clone();
+        let Some(spec) = harness_core::models::provider(&id) else { return };
+        if spec.live
+            && harness_core::models::is_configured(spec)
+            && !self.model_factory.live.contains_key(&id)
+            && self.model_factory.fetching.is_none()
+        {
+            self.start_model_fetch(&id);
+        }
+    }
+
+    fn start_model_fetch(&mut self, provider_id: &str) {
+        let Some(spec) = harness_core::models::provider(provider_id) else { return };
+        if !spec.live || self.model_factory.fetching.is_some() {
+            return;
+        }
+        let http = self.http.clone();
+        let id = provider_id.to_string();
+        let (tx, rx) = std_mpsc::channel();
+        self.model_fetch_rx = Some(rx);
+        self.model_factory.fetching = Some(id.clone());
+        self.model_factory.error = None;
+        self.rt.spawn(async move {
+            let result = harness_core::models::fetch_live_models(&http, spec).await;
+            let _ = tx.send((id, result));
+        });
+    }
+
+    fn pump_model_fetch(&mut self, ctx: &egui::Context) {
+        let Some(rx) = self.model_fetch_rx.as_ref() else { return };
+        let Ok((id, result)) = rx.try_recv() else { return };
+        self.model_fetch_rx = None;
+        self.model_factory.fetching = None;
+        match result {
+            Ok(models) => {
+                let count = models.len();
+                self.model_factory.live.insert(id.clone(), models);
+                self.status = Some(format!("{count} live models loaded from {id}"));
+            }
+            Err(e) => {
+                self.model_factory.error = Some(format!("{id}: {e}"));
+            }
+        }
+        ctx.request_repaint();
+    }
+
+    fn apply_model_factory(&mut self, action: ui::model_factory::ModelFactoryAction, ctx: &egui::Context) {
+        match action {
+            ui::model_factory::ModelFactoryAction::Select(model) => {
+                self.select_model(&model.id, &model.family);
+                self.model_factory.open = false;
+            }
+            ui::model_factory::ModelFactoryAction::UseManual { provider, id } => {
+                let id = route_manual_model_id(&provider, &id);
+                self.select_model(&id, &provider);
+                self.model_factory.open = false;
+            }
+            ui::model_factory::ModelFactoryAction::Refresh(provider) => {
+                self.start_model_fetch(&provider);
+            }
+        }
+        ctx.request_repaint();
+    }
+
+    fn select_model(&mut self, model_id: &str, family: &str) {
+        self.config.model_id = model_id.to_string();
+        self.config.base_url = harness_core::provider::base_url_for(model_id);
+        // Keep the legacy DeepSeek enum in step so older config paths agree.
+        self.config.model = if model_id.contains("v4-pro") {
+            ModelChoice::V4Pro
+        } else {
+            ModelChoice::Flash
+        };
+        self.status = Some(format!(
+            "Model: {}  ·  {}",
+            harness_core::models::display_name(model_id),
+            family
+        ));
+        self.model_factory.manual = model_id.to_string();
+        self.error = None;
+        if let Err(e) = self.config.save() {
+            self.error = Some(format!("could not save the model choice: {e}"));
+        }
+    }
+
+    // ---- voice ------------------------------------------------------------
+
+    fn recording_secs(&self) -> Option<f32> {
+        self.recorder.as_ref().map(|r| r.elapsed_secs())
+    }
+
+    fn toggle_mic(&mut self, ctx: &egui::Context) {
+        match self.voice_status {
+            ui::input::VoiceStatus::Idle => match harness_core::voice::Recorder::start() {
+                Ok(recorder) => {
+                    self.recorder = Some(recorder);
+                    self.voice_status = ui::input::VoiceStatus::Recording;
+                    self.error = None;
+                }
+                Err(e) => self.error = Some(format!("microphone: {e}")),
+            },
+            ui::input::VoiceStatus::Recording => {
+                let Some(recorder) = self.recorder.take() else {
+                    self.voice_status = ui::input::VoiceStatus::Idle;
+                    return;
+                };
+                match recorder.stop() {
+                    Ok(wav) => {
+                        self.voice_status = ui::input::VoiceStatus::Transcribing;
+                        self.status = Some("Transcribing…".into());
+                        let http = self.http.clone();
+                        let (tx, rx) = std_mpsc::channel();
+                        self.stt_rx = Some(rx);
+                        self.rt.spawn(async move {
+                            let result = harness_core::voice::transcribe(&http, &wav)
+                                .await
+                                .map_err(|e| e.to_string());
+                            let _ = tokio::fs::remove_file(&wav).await;
+                            let _ = tx.send(result);
+                        });
+                    }
+                    Err(e) => {
+                        self.voice_status = ui::input::VoiceStatus::Idle;
+                        self.error = Some(format!("recording: {e}"));
+                    }
+                }
+            }
+            ui::input::VoiceStatus::Transcribing => {}
+        }
+        ctx.request_repaint();
+    }
+
+    fn pump_voice(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = self.stt_rx.as_ref() {
+            if let Ok(result) = rx.try_recv() {
+                self.stt_rx = None;
+                self.voice_status = ui::input::VoiceStatus::Idle;
+                match result {
+                    Ok(text) => {
+                        if self.draft.chars().last().is_some_and(|c| !c.is_whitespace()) {
+                            self.draft.push(' ');
+                        }
+                        self.draft.push_str(&text);
+                        self.status = Some("Transcribed into the composer".into());
+                        self.focus_composer = true;
+                    }
+                    Err(e) => self.error = Some(format!("speech to text: {e}")),
+                }
+            }
+        }
+        if let Some(rx) = self.voice_result_rx.as_ref() {
+            if let Ok(result) = rx.try_recv() {
+                self.voice_result_rx = None;
+                self.speaking = false;
+                match result {
+                    Ok(()) => self.status = Some("Spoken".into()),
+                    Err(e) => self.error = Some(format!("text to speech: {e}")),
+                }
+            }
+        }
+        if self.voice_status != ui::input::VoiceStatus::Idle || self.speaking {
+            ctx.request_repaint_after(Duration::from_millis(200));
+        }
+    }
+
+    fn speak(&mut self, text: String, ctx: &egui::Context) {
+        if text.trim().is_empty() || self.speaking {
+            return;
+        }
+        self.speaking = true;
+        self.status = Some("Generating speech…".into());
+        let http = self.http.clone();
+        let voice = self.config.tts_voice.clone();
+        let (tx, rx) = std_mpsc::channel();
+        self.voice_result_rx = Some(rx);
+        self.rt.spawn(async move {
+            let result = match harness_core::voice::synthesize(&http, &text, &voice).await {
+                Ok(clip) => tokio::task::spawn_blocking(move || harness_core::voice::play_clip(&clip))
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and_then(|r| r.map_err(|e| e.to_string()))
+                    .map(|_| ()),
+                Err(e) => Err(e.to_string()),
+            };
+            let _ = tx.send(result);
+        });
+        ctx.request_repaint();
+    }
+
     // ---- sending ----------------------------------------------------------
 
     fn send(&mut self, ctx: &egui::Context) {
@@ -491,7 +761,13 @@ impl App {
         } else {
             title_from(&self.draft)
         };
-        let session = self.session.get_or_insert_with(|| Session::new(title));
+        let session = self.session.get_or_insert_with(|| Session::new(title.clone()));
+        // A chat created with "+ New chat" starts as "New chat"; give it a
+        // real title from the first prompt instead of leaving every session
+        // indistinguishable in the sidebar.
+        if session.header.title.trim().is_empty() || session.header.title == "New chat" {
+            session.header.title = title;
+        }
         session.messages.push(Message::user(text));
 
         self.draft.clear();
@@ -501,9 +777,13 @@ impl App {
         self.error = None;
 
         // Build the request history while the session borrow is still live.
+        // The folder note is rebuilt every send (not stored in the session) so
+        // it follows the file tree's root.
+        let project_dir = absolute_dir(&self.file_tree.root);
         let mut history = Vec::new();
-        if !self.config.system_prompt.trim().is_empty() {
-            history.push(Message::system(self.config.system_prompt.trim()));
+        let system = system_message(&self.config.system_prompt, &project_dir);
+        if !system.is_empty() {
+            history.push(Message::system(system));
         }
         history.extend(session.messages.iter().cloned());
 
@@ -526,12 +806,16 @@ impl App {
         };
 
         let (appr_tx, appr_rx) = agent::approval_channel();
+        let mut registry = self.registry.clone();
+        if project_dir_is_usable(&project_dir) {
+            registry.set_cwd(&project_dir);
+        }
         let input = LoopInput {
             http: self.http.clone(),
             api_key: key,
             history,
             opts,
-            registry: self.registry.clone(),
+            registry,
             mcp: Arc::clone(&self.mcp),
             approvals: appr_rx,
         };
@@ -544,6 +828,7 @@ impl App {
         self.events = Some(rx);
         self.approvals = Some(appr_tx);
         self.busy = true;
+        self.focus_composer = true;
         ctx.request_repaint();
     }
 
@@ -552,6 +837,7 @@ impl App {
         self.events = None;
         self.approvals = None;
         self.busy = false;
+        self.focus_composer = true;
         self.live.clear();
     }
 
@@ -684,6 +970,7 @@ impl App {
                 }
                 self.reconnect();
             }
+            SettingsAction::OpenModelFactory => self.open_model_factory(),
             SettingsAction::OpenBrowser => self.show_browser = true,
             SettingsAction::RemoveServer(name) => {
                 self.plugins.mcp.remove(&name);
@@ -706,12 +993,23 @@ impl App {
             SidebarAction::NewSession => {
                 self.new_session();
                 self.view = View::Chat;
+                self.focus_composer = true;
             }
             SidebarAction::Open(id) => {
                 self.open_session(&id);
                 self.view = View::Chat;
+                self.focus_composer = true;
             }
             SidebarAction::Delete(id) => self.delete_session(&id),
+            SidebarAction::RenameRequest(id) => {
+                self.rename_buf = self
+                    .sessions
+                    .iter()
+                    .find(|h| h.id == id)
+                    .map(|h| h.title.clone())
+                    .unwrap_or_default();
+                self.renaming = Some(id);
+            }
             SidebarAction::OpenSettings => self.view = View::Settings,
             SidebarAction::Theme(choice) => {
                 self.config.theme = choice;
@@ -749,6 +1047,76 @@ impl App {
     }
 }
 
+
+/// The project folder as an absolute path (the file tree starts at "." when none is set).
+fn absolute_dir(root: &std::path::Path) -> std::path::PathBuf {
+    root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
+}
+
+/// False for a saved project_root that has since been deleted or moved: the
+/// tools then keep the process's own folder rather than fail every shell call.
+fn project_dir_is_usable(dir: &std::path::Path) -> bool {
+    dir.is_dir()
+}
+
+/// The user's system prompt plus where the tools run, so the model does not
+/// spend tool rounds exploring to find the project. Empty when there is
+/// neither a prompt nor a usable folder.
+pub(crate) fn system_message(prompt: &str, root: &std::path::Path) -> String {
+    if !project_dir_is_usable(root) {
+        return prompt.trim().to_string();
+    }
+    let note = format!(
+        "Working directory: {}. The shell starts there and relative file paths resolve against it. \
+         A website's entry page should be index.html in that folder (or in dist/, out/ or \
+         public/) so the Preview tab can show it.",
+        absolute_dir(root).display()
+    );
+    match prompt.trim() {
+        "" => note,
+        p => format!("{p}\n\n{note}"),
+    }
+}
+
+/// Give legacy chats a real title from their first user message.
+fn repair_untitled_sessions() {
+    let Ok(headers) = Session::list_all() else { return };
+    for header in headers {
+        let title = header.title.trim();
+        if !title.is_empty() && title != "New chat" {
+            continue;
+        }
+        let path = sessions_dir().join(format!("{}.jsonl", header.id));
+        let Ok(mut session) = Session::load(&path) else { continue };
+        let Some(first) = session
+            .messages
+            .iter()
+            .find(|m| m.role == "user" && !m.content.trim().is_empty())
+        else {
+            continue;
+        };
+        let title = title_from(&first.content);
+        if title != "New chat" {
+            session.header.title = title;
+            let _ = session.save();
+        }
+    }
+}
+
+/// Give a hand-typed model id the routing prefix its provider expects,
+/// unless it already carries one that routes to the same family.
+fn route_manual_model_id(provider: &str, id: &str) -> String {
+    let Some(spec) = harness_core::models::provider(provider) else {
+        return id.to_string();
+    };
+    if spec.prefix.is_empty() || id.starts_with(spec.prefix) {
+        return id.to_string();
+    }
+    if harness_core::provider::provider_family(id) == provider {
+        return id.to_string();
+    }
+    format!("{}{}", spec.prefix, id)
+}
 
 /// A session title drawn from the first user message.
 pub(crate) fn title_from(text: &str) -> String {
@@ -882,6 +1250,51 @@ mod tests {
         let t = title_from(&long);
         assert!(t.ends_with('…'));
         assert_eq!(t.chars().count(), 49);
+    }
+
+    #[test]
+    fn manual_model_ids_are_prefixed_for_their_provider() {
+        assert_eq!(
+            route_manual_model_id("openrouter", "anthropic/claude-3.5-sonnet"),
+            "openrouter/anthropic/claude-3.5-sonnet"
+        );
+        assert_eq!(
+            route_manual_model_id("openrouter", "openrouter/anthropic/claude-3.5-sonnet"),
+            "openrouter/anthropic/claude-3.5-sonnet"
+        );
+        assert_eq!(route_manual_model_id("opencode", "go-anthropic/claude-opus-5"), "go-anthropic/claude-opus-5");
+        assert_eq!(route_manual_model_id("fpt", "DeepSeek-V4-Flash"), "fpt/DeepSeek-V4-Flash");
+        assert_eq!(route_manual_model_id("deepseek", "deepseek-flash"), "deepseek-flash");
+    }
+
+    #[test]
+    fn system_message_names_the_project_folder() {
+        let dir = std::env::temp_dir();
+        let abs = dir.canonicalize().unwrap();
+        let abs = abs.to_str().unwrap();
+
+        let with_prompt = system_message("  be brief ", &dir);
+        assert!(with_prompt.starts_with("be brief"), "{with_prompt}");
+        assert!(with_prompt.contains(abs), "{with_prompt}");
+        assert!(with_prompt.contains("index.html"), "{with_prompt}");
+
+        // No user prompt: the folder note still goes out, with no leading blank lines.
+        let bare = system_message("", &dir);
+        assert!(bare.starts_with("Working directory:"), "{bare}");
+
+        // The empty-project-root default "." must become a real path the model can use.
+        let dot = system_message("", std::path::Path::new("."));
+        assert!(!dot.contains("directory: ."), "{dot}");
+    }
+
+    #[test]
+    fn a_missing_project_folder_is_not_announced() {
+        let gone = std::env::temp_dir().join("aura-harness-no-such-folder");
+        // A stale saved project_root must not be promised to the model as the working directory.
+        assert_eq!(system_message("be brief", &gone), "be brief");
+        assert_eq!(system_message("", &gone), "");
+        assert!(!project_dir_is_usable(&gone));
+        assert!(project_dir_is_usable(&std::env::temp_dir()));
     }
 
     #[test]

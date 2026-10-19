@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 /// Cap on stream → tools → stream rounds, so a confused model cannot spin.
-pub const MAX_TOOL_ROUNDS: usize = 20;
+pub const MAX_TOOL_ROUNDS: usize = 150;
 
 /// What the UI must decide before a command tool runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,7 +148,7 @@ async fn execute_tool(
                     return Ok(format!("[user rejected running {name}]"));
                 }
             }
-            tool.run(&call.function.arguments).await
+            tool.run(&call.function.arguments, registry.cwd()).await
         }
         ToolExecutor::Command(tool) => {
             // Wait for the user's verdict; a closed channel means "reject".
@@ -448,6 +448,33 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.trim(), "builtin-ok");
+    }
+
+    #[tokio::test]
+    async fn builtin_tools_run_in_the_registry_folder() {
+        let dir = std::env::temp_dir().join("agent-cwd-test");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let mut registry = ToolRegistry::new(true);
+        registry.set_cwd(&dir);
+        let mcp = no_mcp();
+        let (_tx, mut rx) = approval_channel();
+
+        let pwd = execute_tool(&registry, &mcp, &call("shell", r#"{"command":"pwd"}"#), &mut rx)
+            .await
+            .unwrap();
+        assert_eq!(pwd.trim(), dir.canonicalize().unwrap().to_str().unwrap());
+
+        execute_tool(
+            &registry,
+            &mcp,
+            &call("write_file", r#"{"path":"index.html","content":"ok"}"#),
+            &mut rx,
+        )
+        .await
+        .unwrap();
+        assert!(dir.join("index.html").is_file());
+        let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 
     #[tokio::test]

@@ -4,6 +4,7 @@ use crate::api::ToolDef;
 use crate::builtins::BuiltinTool;
 use crate::error::{Error, Result};
 use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
 
 /// Where a tool call came from and how to run it.
 #[derive(Debug, Clone)]
@@ -30,6 +31,8 @@ pub struct ToolRegistry {
     builtins: HashSet<String>,
     /// Full access mode: mutating tools run without an approval prompt.
     auto_approve: bool,
+    /// Folder the built-in tools work in; empty means the process's own.
+    cwd: PathBuf,
 }
 
 impl ToolRegistry {
@@ -49,6 +52,16 @@ impl ToolRegistry {
             );
         }
         reg
+    }
+
+    /// Point the built-in tools (shell and file tools) at the project folder.
+    /// Command tools and MCP servers are unaffected.
+    pub fn set_cwd(&mut self, cwd: impl AsRef<Path>) {
+        self.cwd = cwd.as_ref().to_path_buf();
+    }
+
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
     }
 
     pub fn register(&mut self, tool: RegisteredTool) {

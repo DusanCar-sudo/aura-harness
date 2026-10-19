@@ -7,10 +7,12 @@ pub mod cmdtool;
 pub mod config;
 pub mod error;
 pub mod mcp;
+pub mod models;
 pub mod online;
 pub mod provider;
 pub mod session;
 pub mod tools;
+pub mod voice;
 
 pub use error::{Error, Result};
 
@@ -31,6 +33,13 @@ pub fn child_env() -> Vec<(String, String)> {
     ];
     for key in ["LANG", "LC_ALL", "TMPDIR"] {
         if let Ok(v) = std::env::var(key) {
+            env.push((key.into(), v));
+        }
+    }
+    // Owner-granted publish tokens (from ~/.aura/.env): agents push to GitHub
+    // and deploy to Vercel on purpose — this is the product, not a leak.
+    for key in ["GITHUB_TOKEN", "VERCEL_TOKEN"] {
+        if let Some(v) = crate::config::load_api_key_named(key) {
             env.push((key.into(), v));
         }
     }

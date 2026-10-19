@@ -92,6 +92,27 @@ cancel path — the agent's next `send` fails and the loop unwinds.
 - **Tests that mutate `AURA_HARNESS_HOME` race.** `DEEPSEEK_API_KEY` and
   `AURA_HARNESS_HOME` are process-wide, and cargo runs test threads in parallel;
   `harness_core::env_lock::guard()` serializes the ones that touch them.
+- **The tools had no project folder.** The built-ins ran in whatever folder the
+  app was launched from, so on the first real task ("here is my resume, make a
+  portfolio site") the model burned ~8 of its 20 tool rounds hunting for the
+  project — it even read the harness's own source — and hit the cap while
+  verifying. Fix: an explicit `cwd` on `ToolRegistry` (not
+  `std::env::set_current_dir`, which is process-global) plus a system message
+  naming the folder. Same task after the fix: 7 tool rounds instead of 22.
+  `cmdtool` command tools and MCP stdio children still do not get the cwd.
+- **The composer never had the caret.** Nothing requested focus, so after
+  launch, Send, Stop and New chat the user had to click the text box first.
+  `focus_composer` is a one-shot flag; `ComposerState.request_focus` consumes it
+  only when the composer actually renders (so it survives the Settings view).
+- **Driving the real UI headlessly** (how both traps above were found): start a
+  nested `WLR_BACKENDS=headless sway`, run the app inside it with
+  `WAYLAND_DISPLAY`/`SWAYSOCK` pointed at the nested socket and
+  `AURA_HARNESS_HOME` at a scratch dir holding a `config.toml`
+  (`project_root`, `right_panel_tab = "preview"`) and a copy of the credentials.
+  Screenshot with `grim -g`, type with `wtype -s 300 …` — the `-s 300` matters:
+  wtype's virtual keyboard only lives for the command, and without the delay the
+  first character and the Return are dropped. Never use the real session's
+  `WAYLAND_DISPLAY`: keys and captures land on whatever the user has focused.
 - **The `mnemai` launcher was broken.** It hard-coded
   `PYTHONPATH=$HOME/Projects/aura-mnemai`, but the checkout lives at
   `~/Downloads/Projects/aura-mnemai`, so Aura Code, Hermes *and* this app all
@@ -109,10 +130,31 @@ cancel path — the agent's next `send` fails and the loop unwinds.
   (`grim -g "x,y WxH"`, rect from `swaymsg -t get_tree`), never fullscreen it
   for a screenshot — that is what made it look maximised in the first place.
 
+- **A routing prefix is not a wire model id.** The factory stores ids such as
+  `openrouter/anthropic/claude-3.5-sonnet` and `fpt/DeepSeek-V4-Flash` so the
+  right key and endpoint are chosen. The provider must receive the remainder
+  only; `api::build_body` now strips the slash prefix before serialising, and
+  the Anthropic transport strips `anthropic/` too. Without this, OpenRouter
+  received `openrouter/anthropic/...` and DeepSeek received `deepseek/...`.
+- **Two keys can answer the same question.** `~/.aura/keys.json` is Aura Code's
+  live key store; the harness now reads it first (as Aura Code itself does),
+  then environment, `.env`, and its own legacy credentials file. Tests that
+  write credentials must also point `AURA_HOME` at a temp dir or a real key
+  store silently outranks the test value.
+- **Live model names are raw.** DeepSeek's `/models` returns `deepseek-flash`;
+  the factory maps known ids back to the curated display name, which is how
+  "DeepSeek V4.1 Flash 1017" appears even after a live refresh.
+- **Voice is a chain, not one vendor.** MiMo ASR/TTS is first because Aura Code
+  already had those keys and voices; Groq/OpenAI/ElevenLabs are fallbacks. A
+  failed provider is skipped, not fatal. The live `live_tts_stt_round_trip`
+  test synthesizes a sentence and transcribes it back without playback.
+
 ## Verifying
 
 ```bash
-cargo test --workspace     # 58 tests; the mnemai integration test skips if absent
+cargo test --workspace     # 105 unit/integration tests; mnemai skips if absent
+cargo test -p harness-core voice::tests::live_ -- --ignored --nocapture
+cargo test -p harness-core models::tests::live_ -- --ignored --nocapture
 ```
 
 The mnemonics worth remembering when something looks broken:

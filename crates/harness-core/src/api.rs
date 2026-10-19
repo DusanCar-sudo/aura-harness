@@ -279,7 +279,9 @@ fn build_body(messages: &[Message], opts: &ChatOptions) -> Value {
             Model::Flash => "deepseek-flash".to_string(),
             Model::V4Pro => "deepseek-v4-pro".to_string(),
         });
-    let model = model_str;
+    // A routing prefix (`openrouter/`, `fpt/`, `deepseek/`, …) belongs to the
+    // factory, not the wire. Providers expect the bare model id.
+    let model = crate::provider::strip_routing_prefix(&model_str).to_string();
     let effort = opts.effort.unwrap_or(ReasoningEffort::None);
     let thinking = match effort {
         ReasoningEffort::None => ThinkingSwitch { kind: "disabled".into() },
@@ -333,12 +335,12 @@ pub fn stream_chat(
     if let Some(model) = opts.model_name.as_deref() {
         let base_url = opts.base_url.clone();
         let family = crate::provider::provider_family(model);
-        if family == "Anthropic" || model.starts_with("claude/") {
+        if family == "anthropic" || model.starts_with("claude/") {
             return crate::provider::stream_anthropic(
                 http, api_key, base_url.as_deref(), messages, opts,
             );
         }
-        if family == "Google" || model.starts_with("gemini/") {
+        if family == "google" || model.starts_with("gemini/") {
             return crate::provider::stream_google(
                 http, api_key, base_url.as_deref(), messages, opts,
             );
@@ -470,6 +472,16 @@ mod tests {
         let body = build_body(&[], &opts);
         assert_eq!(body["thinking"]["type"], "disabled");
         assert!(body["reasoning_effort"].is_null());
+    }
+
+    #[test]
+    fn body_sends_the_wire_model_without_the_factory_prefix() {
+        let opts = ChatOptions {
+            model_name: Some("openrouter/anthropic/claude-3.5-sonnet".into()),
+            ..Default::default()
+        };
+        let body = build_body(&[], &opts);
+        assert_eq!(body["model"], "anthropic/claude-3.5-sonnet");
     }
 
     #[test]

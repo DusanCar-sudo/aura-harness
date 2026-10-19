@@ -44,6 +44,10 @@ pub struct Config {
     pub auto_approve: bool,
     #[serde(default)]
     pub system_prompt: String,
+    /// Voice used for text-to-speech. MiMo voices (mimo_default, Mia, …) are
+    /// accepted by MiMo TTS; a long opaque id is treated as an ElevenLabs id.
+    #[serde(default = "default_tts_voice")]
+    pub tts_voice: String,
     /// Mirror session summaries to the shared AGENTMEM store (Aura memory layer).
     #[serde(default)]
     pub agentmem_mirror: bool,
@@ -91,6 +95,7 @@ impl Default for Config {
             show_hidden_files: false,
             auto_approve: default_auto_approve(),
             system_prompt: String::new(),
+            tts_voice: default_tts_voice(),
             agentmem_mirror: true,
             disk_bytes: String::new(),
         }
@@ -99,6 +104,10 @@ impl Default for Config {
 
 fn default_background_opacity() -> f32 {
     0.35
+}
+
+fn default_tts_voice() -> String {
+    "mimo_default".to_string()
 }
 
 /// Default to full access: the agent runs tools without an approval prompt.
@@ -484,11 +493,47 @@ pub fn load_dotenv() -> std::collections::BTreeMap<String, String> {
     out
 }
 
-/// Universal API key lookup: tries process env → Aura .env → legacy credentials.
+/// Aura Code's persistent key store (`~/.aura/keys.json`). This is the store
+/// its provider picker writes to, so reading it makes the desktop harness and
+/// the TUI share one set of keys. Values are never logged.
+fn load_keys_json() -> std::collections::BTreeMap<String, String> {
+    let path = aura_home().join("keys.json");
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return std::collections::BTreeMap::new();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return std::collections::BTreeMap::new();
+    };
+    let mut out = std::collections::BTreeMap::new();
+    if let Some(map) = value.as_object() {
+        for (key, value) in map {
+            if let Some(text) = value.as_str() {
+                if !text.trim().is_empty() {
+                    out.insert(key.clone(), text.trim().to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Universal API key lookup. Aura Code's `keys.json` wins over the inherited
+/// environment (set `AURA_KEYS_ENV_WINS=1` to restore the old order), then
+/// process env → Aura `.env` → legacy harness credentials.
 /// The `key_name` argument can be any `*_API_KEY` or `DEEPSEEK_API_KEY`.
 pub fn load_api_key_named(key_name: &str) -> Option<String> {
+    let store = load_keys_json();
+    let env_wins = std::env::var("AURA_KEYS_ENV_WINS").ok().as_deref() == Some("1");
+    if !env_wins {
+        if let Some(v) = store.get(key_name) {
+            return Some(v.clone());
+        }
+    }
     if let Ok(v) = std::env::var(key_name) {
         if !v.trim().is_empty() { return Some(v.trim().to_string()); }
+    }
+    if let Some(v) = store.get(key_name) {
+        return Some(v.clone());
     }
     if let Some(v) = load_dotenv().get(key_name) {
         if !v.trim().is_empty() { return Some(v.clone()); }
@@ -897,6 +942,9 @@ mod tests {
         let _lock = crate::env_lock::guard();
         let dir = std::env::temp_dir().join(format!("aura-harness-cred-{}", uuid::Uuid::new_v4()));
         std::env::set_var("AURA_HARNESS_HOME", &dir);
+        // Isolate the universal store too: a real ~/.aura/keys.json would
+        // (correctly) outrank this legacy fallback.
+        std::env::set_var("AURA_HOME", dir.join("aura"));
         std::env::remove_var("DEEPSEEK_API_KEY");
         store_api_key("sk-test-000").unwrap();
         let meta = std::fs::metadata(dir.join("credentials")).unwrap();
@@ -904,6 +952,7 @@ mod tests {
         assert_eq!(meta.permissions().mode() & 0o777, 0o600);
         assert_eq!(load_api_key().as_deref(), Some("sk-test-000"));
         std::env::remove_var("AURA_HARNESS_HOME");
+        std::env::remove_var("AURA_HOME");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
