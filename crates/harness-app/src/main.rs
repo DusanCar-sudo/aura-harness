@@ -251,29 +251,59 @@ impl App {
 
     // ---- sessions ---------------------------------------------------------
 
-    /// Start a fresh conversation, saving whatever we had.
+    /// Start a fresh conversation. If a turn is still streaming, stop it first
+    /// so its events cannot land in the new chat; the partial answer is kept
+    /// in the old conversation.
     fn new_session(&mut self) {
-        self.persist();
-        self.session = Some(Session::new("New chat"));
+        // Clicking + twice should not pile up identical empty chats.
+        let already_blank = self
+            .session
+            .as_ref()
+            .is_some_and(|s| s.messages.is_empty() && s.header.title.trim() == "New chat");
+        if already_blank {
+            self.stop();
+            self.live.clear();
+            self.cards.clear();
+            self.error = None;
+            self.focus_composer = true;
+            return;
+        }
+
+        // Unconditional: a turn can be between `Finished` and `TurnComplete`,
+        // and its last event must not land in the new chat.
+        self.stop();
+
+        let fresh = Session::new("New chat");
+        // Save it at once so it appears in the sidebar; the title becomes the
+        // first prompt when the user sends.
+        let _ = fresh.save();
+        self.session = Some(fresh);
+        self.refresh_sessions();
         self.live.clear();
         self.cards.clear();
         self.error = None;
+        self.focus_composer = true;
     }
 
     fn open_session(&mut self, id: &str) {
-        self.persist();
+        // Switching chats must not leave the old stream feeding this one.
+        self.stop();
         let path = sessions_dir().join(format!("{id}.jsonl"));
         match Session::load(&path) {
             Ok(s) => {
                 self.session = Some(s);
                 self.live.clear();
                 self.cards.clear();
+                self.error = None;
             }
             Err(e) => self.error = Some(format!("could not open conversation: {e}")),
         }
     }
 
     fn delete_session(&mut self, id: &str) {
+        if self.session.as_ref().map(|s| s.header.id.as_str()) == Some(id) {
+            self.stop();
+        }
         let path = sessions_dir().join(format!("{id}.jsonl"));
         if let Err(e) = std::fs::remove_file(&path) {
             self.error = Some(format!("could not delete conversation: {e}"));
@@ -833,12 +863,20 @@ impl App {
     }
 
     /// Abort the in-flight turn: dropping the channels unwinds the agent loop.
+    /// Whatever has already streamed is saved as a partial assistant message
+    /// in the conversation it belongs to — stopping should not erase the work.
     fn stop(&mut self) {
+        if let Some(partial) = partial_assistant_message(&self.live) {
+            if let Some(session) = self.session.as_mut() {
+                session.messages.push(partial);
+            }
+        }
         self.events = None;
         self.approvals = None;
         self.busy = false;
         self.focus_composer = true;
         self.live.clear();
+        self.persist();
     }
 
     // ---- event pump -------------------------------------------------------
@@ -1078,6 +1116,19 @@ pub(crate) fn system_message(prompt: &str, root: &std::path::Path) -> String {
     }
 }
 
+/// Turn the live streaming buffers into an assistant message, if anything has
+/// arrived. Used when the user stops a turn or starts another chat.
+pub(crate) fn partial_assistant_message(live: &LiveTurn) -> Option<Message> {
+    if live.content.trim().is_empty() && live.reasoning.trim().is_empty() {
+        return None;
+    }
+    let mut message = Message::user("");
+    message.role = "assistant".into();
+    message.content = live.content.clone();
+    message.reasoning_content = live.reasoning.clone();
+    Some(message)
+}
+
 /// Give legacy chats a real title from their first user message.
 fn repair_untitled_sessions() {
     let Ok(headers) = Session::list_all() else { return };
@@ -1250,6 +1301,19 @@ mod tests {
         let t = title_from(&long);
         assert!(t.ends_with('…'));
         assert_eq!(t.chars().count(), 49);
+    }
+
+    #[test]
+    fn stopping_keeps_the_partial_answer() {
+        let mut live = LiveTurn::default();
+        assert!(partial_assistant_message(&live).is_none());
+
+        live.reasoning.push_str("thinking");
+        live.content.push_str("half an answer");
+        let message = partial_assistant_message(&live).expect("partial answer");
+        assert_eq!(message.role, "assistant");
+        assert_eq!(message.content, "half an answer");
+        assert_eq!(message.reasoning_content, "thinking");
     }
 
     #[test]

@@ -103,6 +103,12 @@ pkill -f "release/aura-harness$"
 - **Chat titles**: new sessions title themselves from the first user prompt;
   `repair_untitled_sessions()` migrates old "New chat" sessions at launch.
   Rename via ✎, double-click, or right-click.
+- **Switching chats stops the in-flight turn first** (`new_session`,
+  `open_session`, deleting the open chat). `stop()` appends any streamed
+  content as a partial assistant message to the old session before dropping
+  the channels, so starting a new task cannot leak events into the new chat
+  and cannot erase the old answer. A blank "New chat" is reused instead of
+  stacking duplicates.
 - **Built-in tools** (`builtins.rs`): `shell`, `read_file`, `write_file`,
   `edit_file`, `list_files`, `grep`, `glob`. Registered in
   `ToolRegistry::new()` and **cannot be shadowed** by plugins/MCP. `shell`
