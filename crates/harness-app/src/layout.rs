@@ -30,6 +30,12 @@ impl eframe::App for App {
         // Drag-and-drop anywhere on the window attaches to the composer.
         self.absorb_dropped_files(ctx);
 
+        // Ctrl+B toggles the right panel, so closing it is never a one-way
+        // trip (the panel's own ✕ has no way back on its own).
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::B)) {
+            self.right_panel = !self.right_panel;
+        }
+
         // Repaint immediately when the theme picker moves, so it can be tried
         // before it is saved.
         if self.config.theme != self.applied_theme {
@@ -172,7 +178,7 @@ impl eframe::App for App {
                         ui.selectable_value(&mut tab, RightTab::Preview, "🖼 Preview");
                         ui.selectable_value(&mut tab, RightTab::Plugins, "🔌 Plugins");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("✕").on_hover_text("Hide the panel").clicked() {
+                            if ui.small_button("✕").on_hover_text("Hide the panel — bring it back with the Right panel toggle at the top or Ctrl+B").clicked() {
                                 close_right = true;
                             }
                         });
@@ -294,6 +300,19 @@ impl eframe::App for App {
                 None => {}
             }
         }
+
+        // The pane's ✕ disappears with the pane, so the way back has to live
+        // outside it: a permanent toggle across the top of the workspace.
+        egui::TopBottomPanel::top("panel-toggle-bar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.toggle_value(&mut self.right_panel, "Right panel")
+                        .on_hover_text(
+                            "Show or hide the Files / Preview / Plugins pane · Ctrl+B",
+                        );
+                });
+            });
+        });
 
         let mut settings_action = None;
         let mut chat_action = None;
