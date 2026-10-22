@@ -101,6 +101,8 @@ pub(crate) struct App {
     /// Success notes (green), e.g. "added X from GitHub".
     pub(crate) status: Option<String>,
     pub(crate) md_cache: CommonMarkCache,
+    /// Decoded attachment thumbnails shown in the transcript.
+    pub(crate) image_cache: ui::chat::ImageCache,
 
     /// MCP servers found on this machine but not yet configured here.
     pub(crate) available: Vec<AvailableServer>,
@@ -211,6 +213,7 @@ impl App {
             error: None,
             status: None,
             md_cache: CommonMarkCache::default(),
+            image_cache: ui::chat::ImageCache::new(),
             available: Vec::new(),
             applied_theme: theme_choice,
             logo: load_logo(&cc.egui_ctx),
@@ -782,12 +785,22 @@ impl App {
         };
 
         let mut text = self.draft.trim().to_string();
+        let images = attach::image_parts(&self.attachments);
+        if !images.is_empty() {
+            let model_id = self.current_model_id();
+            if !harness_core::models::supports_images(&model_id) {
+                self.error = Some(format!(
+                    "{model_id} can't read images — switch to a vision model in Model, or remove the image"
+                ));
+                return;
+            }
+        }
         if !self.attachments.is_empty() {
             text.push_str(&attach::render_into_prompt(&self.attachments));
         }
 
         let title = if self.draft.trim().is_empty() {
-            "Attached files".to_string()
+            attach::title_for(&self.attachments)
         } else {
             title_from(&self.draft)
         };
@@ -798,7 +811,9 @@ impl App {
         if session.header.title.trim().is_empty() || session.header.title == "New chat" {
             session.header.title = title;
         }
-        session.messages.push(Message::user(text));
+        let mut turn = Message::user(text);
+        turn.images = images;
+        session.messages.push(turn);
 
         self.draft.clear();
         self.attachments.clear();
@@ -1067,21 +1082,97 @@ impl App {
         }
     }
 
-    /// Pick text files and read them as prompt context.
+    /// The model id the next send will use, after config override.
+    fn current_model_id(&self) -> String {
+        if self.config.model_id.trim().is_empty() {
+            match self.model {
+                ModelChoice::Flash => "deepseek-flash".to_string(),
+                ModelChoice::V4Pro => "deepseek-v4-pro".to_string(),
+            }
+        } else {
+            self.config.model_id.trim().to_string()
+        }
+    }
+
+    /// Pick text or image files and read them as prompt context.
+    ///
+    /// `rfd` is built with the tokio backend, so the dialog must run on the
+    /// app's tokio runtime. The synchronous `FileDialog::pick_files()` blocks
+    /// on pollster without a reactor and panics — which the old
+    /// `catch_unwind` turned into a silent no-op.
     fn attach_files(&mut self) {
         let picked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            rfd::FileDialog::new().pick_files()
-        }))
-        .unwrap_or(None);
-        let Some(paths) = picked else {
-            return;
+            self.rt.block_on(async {
+                rfd::AsyncFileDialog::new()
+                    .set_title("Attach text or images")
+                    .pick_files()
+                    .await
+            })
+        }));
+        let handles = match picked {
+            Ok(Some(handles)) => handles,
+            Ok(None) => return,
+            Err(_) => {
+                self.error = Some("file dialog failed to open (desktop portal error)".into());
+                return;
+            }
         };
+        let paths: Vec<std::path::PathBuf> =
+            handles.iter().map(|h| h.path().to_path_buf()).collect();
+        self.add_attachments(paths);
+    }
+
+    /// Read a batch of picked or dropped paths into the composer, skipping
+    /// duplicates and reporting every rejection.
+    pub(crate) fn add_attachments(&mut self, paths: Vec<std::path::PathBuf>) {
+        if paths.is_empty() {
+            return;
+        }
+        let mut added = 0usize;
+        let mut errors = Vec::new();
         for path in paths {
+            let display = path.display().to_string();
+            if self.attachments.iter().any(|a| a.path == display) {
+                continue;
+            }
             match attach::read_attachment(&path) {
-                Ok(a) => self.attachments.push(a),
-                Err(e) => self.error = Some(e.to_string()),
+                Ok(a) => {
+                    self.attachments.push(a);
+                    added += 1;
+                }
+                Err(e) => errors.push(e.to_string()),
             }
         }
+        if errors.is_empty() {
+            self.error = None;
+            if added > 0 {
+                self.status = Some(format!(
+                    "attached {added} file{}",
+                    if added == 1 { "" } else { "s" }
+                ));
+            }
+        } else {
+            self.status = None;
+            self.error = Some(errors.join(" · "));
+        }
+    }
+
+    /// Files dropped anywhere on the window join the composer.
+    pub(crate) fn absorb_dropped_files(&mut self, ctx: &egui::Context) {
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        if dropped.is_empty() {
+            return;
+        }
+        if self.view != View::Chat {
+            self.view = View::Chat;
+        }
+        self.add_attachments(dropped);
     }
 }
 

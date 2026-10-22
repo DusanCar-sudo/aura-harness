@@ -27,6 +27,8 @@ impl eframe::App for App {
         self.pump_analyze(ctx);
         self.pump_model_fetch(ctx);
         self.pump_voice(ctx);
+        // Drag-and-drop anywhere on the window attaches to the composer.
+        self.absorb_dropped_files(ctx);
 
         // Repaint immediately when the theme picker moves, so it can be tried
         // before it is saved.
@@ -310,6 +312,7 @@ impl eframe::App for App {
                         cards: &self.cards,
                         busy: self.busy,
                         cache: &mut self.md_cache,
+                        images: &mut self.image_cache,
                     },
                 );
             }

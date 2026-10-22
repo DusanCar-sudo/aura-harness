@@ -237,6 +237,7 @@ pub async fn run(input: LoopInput, events: mpsc::Sender<LoopEvent>) -> Result<()
         let display_turn = Message {
             role: "assistant".into(),
             content: answer,
+            images: Vec::new(),
             reasoning_content: reasoning,
             tool_calls: calls.clone(),
             tool_call_id: None,

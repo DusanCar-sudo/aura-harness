@@ -44,8 +44,9 @@ pub fn show(ui: &mut Ui, state: &mut ComposerState<'_>) -> Option<ComposerAction
 
     for (i, att) in state.attachments.iter().enumerate() {
         ui.horizontal(|ui| {
+            let kind = if att.is_image() { "img" } else { "txt" };
             ui.label(
-                RichText::new(short_path(&att.path))
+                RichText::new(format!("{kind} · {}", short_path(&att.path)))
                     .color(theme::dim())
                     .small(),
             );
@@ -58,7 +59,7 @@ pub fn show(ui: &mut Ui, state: &mut ComposerState<'_>) -> Option<ComposerAction
     let hint = if state.busy {
         "Generating…  (Stop to abort)"
     } else {
-        "Ask anything…  (Enter to send, Shift+Enter for a new line)"
+        "Ask anything…  (Enter to send, Shift+Enter for a new line, drop files to attach)"
     };
 
     let response = ui.add(
@@ -79,7 +80,7 @@ pub fn show(ui: &mut Ui, state: &mut ComposerState<'_>) -> Option<ComposerAction
     ui.horizontal_wrapped(|ui| {
         if ui
             .button("Attach")
-            .on_hover_text("Attach text files as context")
+            .on_hover_text("Attach text or image files (you can also drop them on the window)")
             .clicked()
         {
             action = Some(ComposerAction::Attach);

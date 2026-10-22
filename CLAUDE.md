@@ -124,6 +124,16 @@ pkill -f "release/aura-harness$"
   message rebuilt each send (`system_message` in `main.rs`, not stored in the
   session); `grep`'s glob filter, like `glob`, sees paths relative to the
   search root.
+- **Attachments** (`harness-core/src/attach.rs`): text files inline as fenced
+  prompt blocks; images are sniffed by magic bytes, base64-encoded, and sent
+  as real multimodal parts (OpenAI `image_url`, Anthropic `image` source,
+  Gemini `inlineData`). The composer shows thumbnails in the transcript.
+  `models::supports_images` gates sending: DeepSeek V4 Pro answers 200 and
+  silently ignores images, so it is blocked; V4.1 Flash and the vision route
+  accept them. Attach works by picker **and** window drag-and-drop.
+  **Trap:** `rfd` is built with its `tokio` backend, so never call the sync
+  `FileDialog::pick_files()` — its `pollster` block panics with "there is no
+  reactor running". Use `rt.block_on(AsyncFileDialog::pick_files())`.
 - **Composer focus**: the text box takes focus once per `focus_composer`
   (launch, after Send/Stop, New chat, opening a session) via
   `ComposerState.request_focus`; the flag is consumed only when the composer

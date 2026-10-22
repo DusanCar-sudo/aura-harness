@@ -3,9 +3,15 @@
 use crate::markdown;
 use crate::theme;
 use crate::ui::ToolCard;
+use base64::Engine;
 use harness_core::agent::Approval;
-use harness_core::api::Message;
+use harness_core::api::{ImagePart, Message};
 use egui::{Align, Layout, RichText, Ui};
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+
+/// Decoded attachment thumbnails, keyed by a hash of the base64 payload.
+pub type ImageCache = HashMap<u64, (egui::TextureHandle, egui::Vec2)>;
 
 /// Live streaming buffers for the turn currently in flight.
 #[derive(Debug, Default)]
@@ -58,6 +64,7 @@ pub struct ChatState<'a> {
     pub cards: &'a [ToolCard],
     pub busy: bool,
     pub cache: &'a mut egui_commonmark::CommonMarkCache,
+    pub images: &'a mut ImageCache,
 }
 
 pub fn show(ui: &mut Ui, state: &mut ChatState<'_>) -> Option<ChatAction> {
@@ -73,7 +80,7 @@ pub fn show(ui: &mut Ui, state: &mut ChatState<'_>) -> Option<ChatAction> {
             }
 
             for msg in state.messages {
-                if let Some(a) = render_message(ui, state.cache, msg) {
+                if let Some(a) = render_message(ui, state.cache, state.images, msg) {
                     action = Some(a);
                 }
             }
@@ -107,6 +114,7 @@ fn welcome(ui: &mut Ui) {
 fn render_message(
     ui: &mut Ui,
     cache: &mut egui_commonmark::CommonMarkCache,
+    images: &mut ImageCache,
     msg: &Message,
 ) -> Option<ChatAction> {
     let mut action = None;
@@ -133,7 +141,23 @@ fn render_message(
                 .rounding(egui::Rounding::same(6.0))
                 .show(ui, |ui| {
                     ui.label(RichText::new("You").color(theme::structure()).strong().small());
-                    ui.label(RichText::new(&msg.content).color(theme::text()));
+                    for img in &msg.images {
+                        match thumbnail(ui.ctx(), images, img) {
+                            Some((tex, size)) => {
+                                ui.add(egui::Image::new((tex.id(), size)).rounding(4.0));
+                            }
+                            None => {
+                                ui.label(
+                                    RichText::new(format!("[{} image]", img.mime))
+                                        .color(theme::dim())
+                                        .small(),
+                                );
+                            }
+                        }
+                    }
+                    if !msg.content.is_empty() {
+                        ui.label(RichText::new(&msg.content).color(theme::text()));
+                    }
                 });
             ui.add_space(6.0);
         }
@@ -160,6 +184,50 @@ fn render_message(
         _ => {}
     }
     action
+}
+
+/// Decode an attached image once and keep the texture for later frames.
+/// Thumbnails are capped so a 12 MP photo does not become a 12 MP GPU
+/// texture just to be shown in a chat bubble.
+fn thumbnail(
+    ctx: &egui::Context,
+    cache: &mut ImageCache,
+    img: &ImagePart,
+) -> Option<(egui::TextureHandle, egui::Vec2)> {
+    const EDGE: f32 = 260.0;
+    let key = {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        img.data.hash(&mut h);
+        h.finish()
+    };
+    if let Some((tex, size)) = cache.get(&key) {
+        return Some((tex.clone(), *size));
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&img.data)
+        .ok()?;
+    let decoded = image::load_from_memory(&bytes).ok()?.to_rgba8();
+    let (w, h) = decoded.dimensions();
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let scale = (EDGE / w.max(h) as f32).min(1.0);
+    let rgba = if scale < 1.0 {
+        image::imageops::resize(
+            &decoded,
+            (w as f32 * scale).max(1.0) as u32,
+            (h as f32 * scale).max(1.0) as u32,
+            image::imageops::FilterType::Triangle,
+        )
+    } else {
+        decoded
+    };
+    let size = egui::vec2(rgba.width() as f32, rgba.height() as f32);
+    let color =
+        egui::ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw());
+    let tex = ctx.load_texture(format!("attachment-{key}"), color, egui::TextureOptions::LINEAR);
+    cache.insert(key, (tex.clone(), size));
+    Some((tex, size))
 }
 
 /// Dimmed, collapsed-by-default chain of thought.

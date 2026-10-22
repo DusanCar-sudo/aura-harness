@@ -490,6 +490,49 @@ pub fn is_known(model_id: &str) -> bool {
     KNOWN_MODELS.iter().any(|m| m.id == model_id)
 }
 
+/// Whether the selected model can take image content parts.
+///
+/// Deliberately generous for aggregators and local servers: if we are unsure,
+/// let the request through — the provider answers with its own clear error.
+/// The important half is knowing which mainstream text models cannot, so the
+/// composer can say so before spending a round-trip.
+pub fn supports_images(model_id: &str) -> bool {
+    let id = model_id.trim().to_ascii_lowercase();
+    if id.is_empty() {
+        return false;
+    }
+    match crate::provider::provider_family(&id) {
+        "anthropic" => true,
+        "google" => true,
+        "openai" => [
+            "gpt-4o",
+            "gpt-4.1",
+            "gpt-4-turbo",
+            "gpt-5",
+            "o3",
+            "o4",
+            "computer-use",
+        ]
+        .iter()
+        .any(|p| id.contains(p)),
+        // DeepSeek V4 Pro answers 200 and silently ignores images, so it must
+        // stay blocked. V4.1 Flash and the vision route do process them
+        // (verified live 2026-10-22).
+        "deepseek" => {
+            id.contains("vision")
+                || matches!(
+                    id.as_str(),
+                    "deepseek-flash" | "deepseek-v4.1-flash" | "deepseek-v4-flash"
+                )
+        }
+        "xai" => id.contains("vision") || id.contains("grok-3") || id.contains("grok-4"),
+        "openrouter" => true,
+        _ => ["vision", "-vl", "vl-", "multimodal", "omni", "llava", "pixtral"]
+            .iter()
+            .any(|p| id.contains(p)),
+    }
+}
+
 /// Human name for the selected model id, falling back to the id itself.
 pub fn display_name(model_id: &str) -> String {
     KNOWN_MODELS
@@ -930,6 +973,20 @@ mod tests {
             .expect("DeepSeek V4.1 Flash 1017 must be in the factory");
         assert!(found.name.contains("V4.1 Flash"));
         assert!(found.name.contains("1017"));
+    }
+
+    #[test]
+    fn image_capability_is_honest_about_text_models() {
+        assert!(supports_images("claude-opus-4-5-20251001"));
+        assert!(supports_images("gemini-2.5-flash"));
+        assert!(supports_images("gpt-4o"));
+        assert!(supports_images("deepseek-v4-flash-vision-exp"));
+        assert!(supports_images("deepseek-flash"));
+        assert!(supports_images("grok-vision-beta"));
+        assert!(!supports_images("deepseek-v4-pro"));
+        assert!(!supports_images("deepseek/deepseek-chat"));
+        assert!(!supports_images("gpt-3.5-turbo"));
+        assert!(!supports_images(""));
     }
 
     #[test]

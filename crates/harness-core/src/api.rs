@@ -80,12 +80,36 @@ pub struct FunctionCall {
     pub arguments: String,
 }
 
+/// One image attached to a user turn, already base64-encoded.
+///
+/// The wire shape differs per provider (OpenAI `image_url`, Anthropic `image`
+/// source, Gemini `inlineData`), so the transports translate it themselves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImagePart {
+    /// e.g. `image/png`
+    pub mime: String,
+    /// Standard base64, no data-URI prefix.
+    pub data: String,
+}
+
+impl ImagePart {
+    /// `data:image/png;base64,…` — the OpenAI-compatible shape.
+    pub fn data_uri(&self) -> String {
+        format!("data:{};base64,{}", self.mime, self.data)
+    }
+}
+
 /// One message in a conversation, on our side and on the wire.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String, // system | user | assistant | tool
     #[serde(default)]
     pub content: String,
+    /// Images attached to a user turn. Kept out of the OpenAI-compatible
+    /// `messages` serialization — [`wire_message`] expands them into a
+    /// content-part array instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImagePart>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub reasoning_content: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -102,6 +126,7 @@ impl Message {
         Self {
             role: "user".into(),
             content: content.into(),
+            images: Vec::new(),
             reasoning_content: String::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
@@ -268,6 +293,41 @@ pub fn parse_stream_chunk(payload: &str) -> Result<Vec<StreamEvent>> {
     Ok(events)
 }
 
+/// One message in the OpenAI-compatible wire shape.
+///
+/// Messages without images keep `content` as a plain string (the format every
+/// compatible server understands). With images, `content` becomes the
+/// multimodal part array. `images` itself is never sent as a field.
+fn wire_message(m: &Message) -> Value {
+    let mut out = serde_json::Map::new();
+    out.insert("role".into(), json!(m.role));
+    if m.images.is_empty() {
+        out.insert("content".into(), json!(m.content));
+    } else {
+        let mut parts = Vec::with_capacity(m.images.len() + 1);
+        if !m.content.is_empty() {
+            parts.push(json!({"type": "text", "text": m.content}));
+        }
+        for img in &m.images {
+            parts.push(json!({
+                "type": "image_url",
+                "image_url": { "url": img.data_uri() }
+            }));
+        }
+        out.insert("content".into(), Value::Array(parts));
+    }
+    if !m.tool_calls.is_empty() {
+        out.insert(
+            "tool_calls".into(),
+            serde_json::to_value(&m.tool_calls).unwrap_or(Value::Null),
+        );
+    }
+    if let Some(id) = &m.tool_call_id {
+        out.insert("tool_call_id".into(), json!(id));
+    }
+    Value::Object(out)
+}
+
 fn build_body(messages: &[Message], opts: &ChatOptions) -> Value {
     // Use explicit model_name string if provided (multi-provider routing),
     // else fall back to the Model enum (legacy DeepSeek).
@@ -312,7 +372,7 @@ fn build_body(messages: &[Message], opts: &ChatOptions) -> Value {
     };
     serde_json::json!({
         "model": model,
-        "messages": messages,
+        "messages": messages.iter().map(wire_message).collect::<Vec<_>>(),
         "stream": true,
         "stream_options": { "include_usage": true },
         "thinking": thinking,
@@ -517,6 +577,49 @@ mod tests {
         assert!(wire.reasoning_content.is_empty());
         assert!(wire.ts.is_none());
         assert_eq!(wire.content, "hi");
+    }
+
+    #[test]
+    fn text_message_stays_a_plain_string_on_the_wire() {
+        let m = Message::user("hello");
+        let body = build_body(&[m], &ChatOptions::default());
+        assert_eq!(body["messages"][0]["content"], "hello");
+        assert!(body["messages"][0].get("images").is_none());
+    }
+
+    #[test]
+    fn image_message_becomes_content_parts() {
+        let mut m = Message::user("what is this?");
+        m.images = vec![ImagePart {
+            mime: "image/png".into(),
+            data: "aGVsbG8=".into(),
+        }];
+        let body = build_body(&[m], &ChatOptions::default());
+        let content = &body["messages"][0]["content"];
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "what is this?");
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(
+            content[1]["image_url"]["url"],
+            "data:image/png;base64,aGVsbG8="
+        );
+        assert!(
+            body["messages"][0].get("images").is_none(),
+            "images are expanded into content, never sent as a field"
+        );
+    }
+
+    #[test]
+    fn image_only_message_has_no_empty_text_part() {
+        let mut m = Message::user("");
+        m.images = vec![ImagePart {
+            mime: "image/jpeg".into(),
+            data: "eA==".into(),
+        }];
+        let body = build_body(&[m], &ChatOptions::default());
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "image_url");
     }
 
     /// The API rejected a request with `missing field type` — every assistant

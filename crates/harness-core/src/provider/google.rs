@@ -52,8 +52,17 @@ pub fn stream_chat(
                 contents.push(json!({"role": "user", "parts": [{"text": format!("Tool result: {}", m.content)}]}));
             }
             _ => {
+                let mut parts = Vec::with_capacity(m.images.len() + 1);
                 if !m.content.is_empty() {
-                    contents.push(json!({"role": "user", "parts": [{"text": m.content}]}));
+                    parts.push(json!({"text": m.content}));
+                }
+                for img in &m.images {
+                    parts.push(json!({
+                        "inlineData": { "mimeType": img.mime, "data": img.data }
+                    }));
+                }
+                if !parts.is_empty() {
+                    contents.push(json!({"role": "user", "parts": parts}));
                 }
             }
         }

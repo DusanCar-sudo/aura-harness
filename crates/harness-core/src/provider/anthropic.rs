@@ -50,6 +50,19 @@ pub fn stream_chat(
         if !m.content.is_empty() {
             content.push(json!({"type": "text", "text": m.content}));
         }
+        // Anthropic accepts images as base64 source blocks on user turns.
+        if m.role == "user" {
+            for img in &m.images {
+                content.push(json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": img.mime,
+                        "data": img.data,
+                    }
+                }));
+            }
+        }
         if m.role == "assistant" {
             for tc in &m.tool_calls {
                 content.push(json!({"type": "tool_use", "id": tc.id, "name": tc.function.name, "input": tc.function.arguments}));

@@ -26,7 +26,10 @@ sharing code with the TUI, web client, or Droid.
 - **Streaming answers** with chain-of-thought shown live in a collapsible
   "Thought for Ns" block (thinking off/low/high/max)
 - **Rich markdown** — syntax-highlighted code blocks with a copy button
-- **Attachments** — pick text files (1 MiB each) and they ride along as context
+- **Attachments** — pick or drag in text files (1 MiB each) and images
+  (PNG/JPEG/GIF/WebP, up to 8 MiB). Text rides along as context; images
+  are sent as real multimodal parts to models that accept them, and the
+  composer says so when the selected model cannot read images.
 - **Plugins, immediately available**
   - **MCP servers** over stdio; their tools appear to the model as
     `mcp_<server>_<tool>` and run automatically

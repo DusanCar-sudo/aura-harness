@@ -173,6 +173,7 @@ mod tests {
         s.messages.push(Message {
             role: "assistant".into(),
             content: "answer".into(),
+            images: Vec::new(),
             reasoning_content: "thought".into(),
             tool_calls: Vec::new(),
             tool_call_id: None,
