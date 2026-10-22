@@ -105,8 +105,7 @@ fn welcome(ui: &mut Ui) {
         theme::stripes(ui, 180.0);
         ui.add_space(6.0);
         ui.label(
-            RichText::new("DeepSeek harness — streaming reasoning, markdown, your plugins.")
-                .color(theme::dim()),
+            RichText::new("leanproiq.com  ·  leanroboiq.online").color(theme::dim()),
         );
     });
 }
