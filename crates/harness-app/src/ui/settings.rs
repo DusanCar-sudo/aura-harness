@@ -132,11 +132,13 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
                 .small(),
             );
             ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(state.key_input)
+                crate::ui::text_edit(
+                    ui,
+                    state.key_input,
+                    crate::ui::TextEditSpec::singleline()
                         .password(true)
-                        .hint_text("sk-… (DeepSeek fallback)")
-                        .desired_width(360.0),
+                        .hint("sk-… (DeepSeek fallback)")
+                        .width(360.0),
                 );
                 if ui.button("Save key").clicked() {
                     action = Some(SettingsAction::SaveKey(state.key_input.clone()));
@@ -174,10 +176,12 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
             });
             ui.horizontal(|ui| {
                 ui.label("Background image");
-                ui.add(
-                    egui::TextEdit::singleline(&mut state.config.background_image)
-                        .desired_width(220.0)
-                        .hint_text("path to png/jpg/webp"),
+                crate::ui::text_edit(
+                    ui,
+                    &mut state.config.background_image,
+                    crate::ui::TextEditSpec::singleline()
+                        .width(220.0)
+                        .hint("path to png/jpg/webp"),
                 );
                 if ui.button("Pick...").clicked() {
                     // A portal hiccup must not take the harness down.
@@ -282,11 +286,13 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
             });
 
             ui.label("System prompt");
-            ui.add(
-                egui::TextEdit::multiline(&mut state.config.system_prompt)
-                    .hint_text("Optional instructions prepended to every conversation")
-                    .desired_rows(3)
-                    .desired_width(f32::INFINITY),
+            crate::ui::text_edit(
+                ui,
+                &mut state.config.system_prompt,
+                crate::ui::TextEditSpec::multiline()
+                    .hint("Optional instructions prepended to every conversation")
+                    .rows(3)
+                    .width(f32::INFINITY),
             );
             ui.checkbox(
                 &mut state.config.agentmem_mirror,
@@ -326,10 +332,12 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
             }
             ui.horizontal(|ui| {
                 ui.label("TTS voice");
-                ui.add(
-                    egui::TextEdit::singleline(&mut state.config.tts_voice)
-                        .hint_text("mimo_default, Mia, or an ElevenLabs id")
-                        .desired_width(260.0),
+                crate::ui::text_edit(
+                    ui,
+                    &mut state.config.tts_voice,
+                    crate::ui::TextEditSpec::singleline()
+                        .hint("mimo_default, Mia, or an ElevenLabs id")
+                        .width(260.0),
                 );
             });
             ui.small("Mic and speaker buttons live in the composer and on every assistant message.");

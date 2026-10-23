@@ -84,17 +84,21 @@ pub fn show(
 
     ui.horizontal(|ui| {
         ui.label(RichText::new("Find provider").color(theme::dim()).small());
-        ui.add(
-            egui::TextEdit::singleline(&mut state.provider_query)
-                .hint_text("deepseek, groq, openrouter…")
-                .desired_width(180.0),
+        crate::ui::text_edit(
+            ui,
+            &mut state.provider_query,
+            crate::ui::TextEditSpec::singleline()
+                .hint("deepseek, groq, openrouter…")
+                .width(180.0),
         );
         ui.add_space(12.0);
         ui.label(RichText::new("Find model").color(theme::dim()).small());
-        ui.add(
-            egui::TextEdit::singleline(&mut state.model_query)
-                .hint_text("name or id")
-                .desired_width(240.0),
+        crate::ui::text_edit(
+            ui,
+            &mut state.model_query,
+            crate::ui::TextEditSpec::singleline()
+                .hint("name or id")
+                .width(240.0),
         );
     });
     ui.add_space(4.0);
@@ -231,10 +235,12 @@ pub fn show(
             } else {
                 format!("bare id (routed as {})", spec.prefix)
             };
-            ui.add(
-                egui::TextEdit::singleline(&mut state.manual)
-                    .hint_text(hint)
-                    .desired_width(280.0),
+            crate::ui::text_edit(
+                ui,
+                &mut state.manual,
+                crate::ui::TextEditSpec::singleline()
+                    .hint(&hint)
+                    .width(280.0),
             );
             if ui.button("Use id").clicked() && !state.manual.trim().is_empty() {
                 action = Some(ModelFactoryAction::UseManual {

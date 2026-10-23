@@ -376,16 +376,18 @@ impl eframe::App for App {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    let response = egui::TextEdit::singleline(&mut self.rename_buf)
-                        .desired_width(280.0)
-                        .show(ui);
-                    if !response.response.has_focus() {
-                        response.response.request_focus();
+                    let response = crate::ui::text_edit(
+                        ui,
+                        &mut self.rename_buf,
+                        crate::ui::TextEditSpec::singleline().width(280.0),
+                    );
+                    if !response.has_focus() {
+                        response.request_focus();
                     }
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
                         if ui.button("Save").clicked()
-                            || (response.response.lost_focus()
+                            || (response.lost_focus()
                                 && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                         {
                             if let Some(action) = self.take_rename(&id) {

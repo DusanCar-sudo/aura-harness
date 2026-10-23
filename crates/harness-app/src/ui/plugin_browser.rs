@@ -49,10 +49,12 @@ pub struct BrowserState<'a> {
 pub fn show(ui: &mut Ui, state: &mut BrowserState<'_>) -> Option<BrowserAction> {
     let mut action = None;
 
-    ui.add(
-        egui::TextEdit::singleline(state.query)
-            .hint_text("Search — game dev, memory, fetch, github…")
-            .desired_width(f32::INFINITY),
+    crate::ui::text_edit(
+        ui,
+        state.query,
+        crate::ui::TextEditSpec::singleline()
+            .hint("Search — game dev, memory, fetch, github…")
+            .width(f32::INFINITY),
     );
     ui.add_space(6.0);
 
@@ -145,10 +147,12 @@ pub fn show(ui: &mut Ui, state: &mut BrowserState<'_>) -> Option<BrowserAction> 
     );
     ui.horizontal(|ui| {
         let is_url = online::looks_like_github_url(state.line);
-        let field = ui.add(
-            egui::TextEdit::singleline(state.line)
-                .hint_text("npx -y rea-agents mcp   ·   https://github.com/owner/repo")
-                .desired_width(f32::INFINITY),
+        let field = crate::ui::text_edit(
+            ui,
+            state.line,
+            crate::ui::TextEditSpec::singleline()
+                .hint("npx -y rea-agents mcp   ·   https://github.com/owner/repo")
+                .width(f32::INFINITY),
         );
         let submitted = field.lost_focus()
             && ui.input(|i| i.key_pressed(egui::Key::Enter))

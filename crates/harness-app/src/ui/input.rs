@@ -62,11 +62,13 @@ pub fn show(ui: &mut Ui, state: &mut ComposerState<'_>) -> Option<ComposerAction
         "Ask anything…  (Enter to send, Shift+Enter for a new line, drop files to attach)"
     };
 
-    let response = ui.add(
-        egui::TextEdit::multiline(state.draft)
-            .hint_text(hint)
-            .desired_rows(3)
-            .desired_width(f32::INFINITY),
+    let response = crate::ui::text_edit(
+        ui,
+        state.draft,
+        crate::ui::TextEditSpec::multiline()
+            .hint(hint)
+            .rows(3)
+            .width(f32::INFINITY),
     );
     if state.request_focus {
         response.request_focus();

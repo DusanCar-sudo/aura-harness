@@ -117,3 +117,272 @@ impl ToolCard {
         self.needs_approval && self.decision.is_none()
     }
 }
+
+/// How a text field should look. The menu behaviour comes from [`text_edit`].
+pub struct TextEditSpec<'a> {
+    multiline: bool,
+    hint: &'a str,
+    width: Option<f32>,
+    rows: usize,
+    password: bool,
+}
+
+impl<'a> TextEditSpec<'a> {
+    pub fn singleline() -> Self {
+        Self { multiline: false, hint: "", width: None, rows: 3, password: false }
+    }
+
+    pub fn multiline() -> Self {
+        Self { multiline: true, ..Self::singleline() }
+    }
+
+    pub fn hint(mut self, hint: &'a str) -> Self {
+        self.hint = hint;
+        self
+    }
+
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
+        self
+    }
+
+    pub fn rows(mut self, rows: usize) -> Self {
+        self.rows = rows;
+        self
+    }
+
+    pub fn password(mut self, password: bool) -> Self {
+        self.password = password;
+        self
+    }
+}
+
+enum MenuAction {
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+}
+
+/// A text field that behaves like a desktop one: right-click gives Cut, Copy,
+/// Paste and Select all, and Ctrl+A works. egui 0.29 ships neither, although
+/// it does wire Ctrl+C/X/V and Ctrl+Z/Y in `TextEdit`.
+pub fn text_edit(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    spec: TextEditSpec<'_>,
+) -> egui::Response {
+    let mut edit = if spec.multiline {
+        egui::TextEdit::multiline(text)
+    } else {
+        egui::TextEdit::singleline(text)
+    };
+    if !spec.hint.is_empty() {
+        edit = edit.hint_text(spec.hint);
+    }
+    if let Some(width) = spec.width {
+        edit = edit.desired_width(width);
+    }
+    if spec.multiline {
+        edit = edit.desired_rows(spec.rows);
+    }
+    if spec.password {
+        edit = edit.password(true);
+    }
+
+    let output = edit.show(ui);
+    let response = output.response;
+    let id = response.id;
+    let mut state = output.state;
+
+    // Right-click should put the caret in the field it is acting on.
+    if response.secondary_clicked() {
+        response.request_focus();
+    }
+
+    // egui 0.29 ignores Ctrl+A in TextEdit; do it here while we know both the
+    // state and the text.
+    if response.has_focus() && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A)) {
+        select_all(text, &mut state);
+        egui::TextEdit::store_state(ui.ctx(), id, state.clone());
+        ui.ctx().request_repaint();
+    }
+
+    let mut action = None;
+    response.context_menu(|ui| {
+        let has_selection = selection_range(&state).is_some();
+        if ui.add_enabled(has_selection, egui::Button::new("Cut")).clicked() {
+            action = Some(MenuAction::Cut);
+            ui.close_menu();
+        }
+        if ui.add_enabled(has_selection, egui::Button::new("Copy")).clicked() {
+            action = Some(MenuAction::Copy);
+            ui.close_menu();
+        }
+        if ui.button("Paste").clicked() {
+            action = Some(MenuAction::Paste);
+            ui.close_menu();
+        }
+        ui.separator();
+        if ui.button("Select all").clicked() {
+            action = Some(MenuAction::SelectAll);
+            ui.close_menu();
+        }
+    });
+
+    if let Some(action) = action {
+        match action {
+            MenuAction::Copy => {
+                if let Some((a, b)) = selection_range(&state) {
+                    ui.ctx().copy_text(slice_chars(text, a, b));
+                }
+            }
+            MenuAction::Cut => {
+                if let Some((a, b)) = selection_range(&state) {
+                    ui.ctx().copy_text(slice_chars(text, a, b));
+                    let (ba, bb) = (byte_index(text, a), byte_index(text, b));
+                    text.replace_range(ba..bb, "");
+                    set_cursor(&mut state, a);
+                }
+            }
+            MenuAction::Paste => {
+                if let Some(paste) = clipboard_text() {
+                    insert_text(text, &mut state, &paste);
+                }
+            }
+            MenuAction::SelectAll => select_all(text, &mut state),
+        }
+        egui::TextEdit::store_state(ui.ctx(), id, state.clone());
+        response.request_focus();
+        ui.ctx().request_repaint();
+    }
+
+    response
+}
+
+fn selection_range(state: &egui::widgets::text_edit::TextEditState) -> Option<(usize, usize)> {
+    let range = state.cursor.char_range()?;
+    let a = range.primary.index.min(range.secondary.index);
+    let b = range.primary.index.max(range.secondary.index);
+    (a != b).then_some((a, b))
+}
+
+fn set_cursor(state: &mut egui::widgets::text_edit::TextEditState, index: usize) {
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(index))));
+}
+
+fn select_all(text: &str, state: &mut egui::widgets::text_edit::TextEditState) {
+    let len = text.chars().count();
+    state.cursor.set_char_range(Some(egui::text::CCursorRange {
+        primary: egui::text::CCursor::new(len),
+        secondary: egui::text::CCursor::new(0),
+    }));
+}
+
+fn slice_chars(text: &str, a: usize, b: usize) -> String {
+    text.chars().skip(a).take(b.saturating_sub(a)).collect()
+}
+
+fn byte_index(text: &str, char_index: usize) -> usize {
+    text.char_indices()
+        .nth(char_index)
+        .map(|(byte, _)| byte)
+        .unwrap_or(text.len())
+}
+
+fn insert_text(text: &mut String, state: &mut egui::widgets::text_edit::TextEditState, insert: &str) {
+    let (a, b) = selection_range(state).unwrap_or_else(|| {
+        let caret = state
+            .cursor
+            .char_range()
+            .map(|range| range.primary.index)
+            .unwrap_or_else(|| text.chars().count());
+        (caret, caret)
+    });
+    let (ba, bb) = (byte_index(text, a), byte_index(text, b));
+    text.replace_range(ba..bb, insert);
+    set_cursor(state, a + insert.chars().count());
+}
+
+/// Read the system clipboard. arboard is the cross-platform path; the Linux
+/// commands are a fallback for compositors where arboard cannot attach.
+fn clipboard_text() -> Option<String> {
+    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+        if let Ok(text) = clipboard.get_text() {
+            if !text.is_empty() {
+                return Some(text);
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        for (cmd, args) in [
+            ("wl-paste", &["--no-newline"][..]),
+            ("xclip", &["-selection", "clipboard", "-o"][..]),
+        ] {
+            if let Ok(out) = std::process::Command::new(cmd).args(args).output() {
+                if out.status.success() {
+                    if let Ok(text) = String::from_utf8(out.stdout) {
+                        if !text.is_empty() {
+                            return Some(text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod text_edit_tests {
+    use super::*;
+
+    fn state_with_range(a: usize, b: usize) -> egui::widgets::text_edit::TextEditState {
+        let mut state = egui::widgets::text_edit::TextEditState::default();
+        state.cursor.set_char_range(Some(egui::text::CCursorRange {
+            primary: egui::text::CCursor::new(a),
+            secondary: egui::text::CCursor::new(b),
+        }));
+        state
+    }
+
+    #[test]
+    fn paste_replaces_the_selection() {
+        let mut text = "hello world".to_owned();
+        let mut state = state_with_range(11, 6);
+        insert_text(&mut text, &mut state, "there");
+        assert_eq!(text, "hello there");
+        assert_eq!(state.cursor.char_range().unwrap().primary.index, 11);
+    }
+
+    #[test]
+    fn paste_uses_character_offsets_not_bytes() {
+        let mut text = "héllo".to_owned();
+        let mut state = state_with_range(1, 2);
+        insert_text(&mut text, &mut state, "e");
+        assert_eq!(text, "hello");
+    }
+
+    #[test]
+    fn select_all_covers_the_whole_text() {
+        let text = "abc".to_owned();
+        let mut state = egui::widgets::text_edit::TextEditState::default();
+        select_all(&text, &mut state);
+        assert_eq!(selection_range(&state), Some((0, 3)));
+        // And a cut through the helper's range math is lossless.
+        let (a, b) = selection_range(&state).unwrap();
+        assert_eq!(slice_chars(&text, a, b), text);
+    }
+
+    #[test]
+    fn byte_index_clamps_past_the_end() {
+        let text = "héllo";
+        assert_eq!(byte_index(text, 0), 0);
+        assert_eq!(byte_index(text, 1), 1);
+        assert_eq!(byte_index(text, 2), 3);
+        assert_eq!(byte_index(text, 99), text.len());
+    }
+}

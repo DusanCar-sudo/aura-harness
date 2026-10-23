@@ -129,9 +129,10 @@ impl FileTreeState {
         });
         ui.separator();
         ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.filter)
-                    .hint_text("filter (name or path)"),
+            crate::ui::text_edit(
+                ui,
+                &mut self.filter,
+                crate::ui::TextEditSpec::singleline().hint("filter (name or path)"),
             );
             if ui
                 .small_button(if self.show_hidden {
@@ -257,7 +258,11 @@ impl FileTreeState {
             ui.horizontal(|ui| {
                 ui.small("Rename:");
                 let mut draft = name.clone();
-                let resp = ui.text_edit_singleline(&mut draft);
+                let resp = crate::ui::text_edit(
+                    ui,
+                    &mut draft,
+                    crate::ui::TextEditSpec::singleline(),
+                );
                 resp.request_focus();
                 if ui.small_button("save").clicked()
                     || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
@@ -275,7 +280,11 @@ impl FileTreeState {
             let mut draft = name.clone();
             ui.horizontal(|ui| {
                 ui.small(if is_dir { "New folder:" } else { "New file:" });
-                let resp = ui.text_edit_singleline(&mut draft);
+                let resp = crate::ui::text_edit(
+                    ui,
+                    &mut draft,
+                    crate::ui::TextEditSpec::singleline(),
+                );
                 resp.request_focus();
                 if ui.small_button("create").clicked()
                     || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))

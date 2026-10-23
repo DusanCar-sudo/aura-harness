@@ -95,6 +95,8 @@ pub fn show(ui: &mut Ui, state: &mut ChatState<'_>) -> Option<ChatAction> {
             render_live(ui, state);
         });
 
+    show_message_menu(ui, &mut action);
+
     action
 }
 
@@ -134,7 +136,7 @@ fn render_message(
     });
     match msg.role.as_str() {
         "user" => {
-            egui::Frame::none()
+            let bubble = egui::Frame::none()
                 .fill(theme::bubble())
                 .inner_margin(egui::Margin::same(10.0))
                 .rounding(egui::Rounding::same(6.0))
@@ -158,19 +160,23 @@ fn render_message(
                         ui.label(RichText::new(&msg.content).color(theme::text()));
                     }
                 });
+            note_right_click(ui, bubble.response.rect, msg);
             ui.add_space(6.0);
         }
         "assistant" => {
-            if !msg.reasoning_content.is_empty() {
-                reasoning_block(ui, &msg.reasoning_content, None);
-            }
-            if !msg.content.is_empty() {
-                markdown::show(ui, cache, &msg.content);
-            }
+            let block = ui.scope(|ui| {
+                if !msg.reasoning_content.is_empty() {
+                    reasoning_block(ui, &msg.reasoning_content, None);
+                }
+                if !msg.content.is_empty() {
+                    markdown::show(ui, cache, &msg.content);
+                }
+            });
+            note_right_click(ui, block.response.rect, msg);
             ui.add_space(6.0);
         }
         "tool" => {
-            egui::Frame::none()
+            let card = egui::Frame::none()
                 .fill(theme::field())
                 .inner_margin(egui::Margin::same(8.0))
                 .rounding(egui::Rounding::same(4.0))
@@ -178,11 +184,84 @@ fn render_message(
                     ui.label(RichText::new("tool result").color(theme::dim()).small());
                     ui.label(RichText::new(&msg.content).color(theme::dim()).monospace());
                 });
+            note_right_click(ui, card.response.rect, msg);
             ui.add_space(4.0);
         }
         _ => {}
     }
     action
+}
+
+/// One open right-click menu for the transcript.
+#[derive(Clone, Default)]
+struct ChatMenu {
+    pos: egui::Pos2,
+    content: String,
+    speak: bool,
+}
+
+fn menu_id() -> egui::Id {
+    egui::Id::new("chat-context-menu")
+}
+
+/// Remember that a message was right-clicked. The menu is painted by
+/// [`show_message_menu`] after the scroll area, so it cannot be clipped.
+fn note_right_click(ui: &Ui, rect: egui::Rect, msg: &Message) {
+    let (pos, clicked) = ui.input(|i| (i.pointer.interact_pos(), i.pointer.secondary_clicked()));
+    if let (true, Some(pos)) = (clicked, pos) {
+        if rect.contains(pos) {
+            ui.data_mut(|data| {
+                data.insert_temp(
+                    menu_id(),
+                    ChatMenu {
+                        pos,
+                        content: msg.content.clone(),
+                        speak: msg.role == "assistant" && !msg.content.is_empty(),
+                    },
+                )
+            });
+        }
+    }
+}
+
+/// Draw the transcript's right-click menu: copy the whole message, and read
+/// an assistant answer aloud. Text selection inside a bubble still copies
+/// with Ctrl+C; this is the one-click path.
+fn show_message_menu(ui: &mut Ui, action: &mut Option<ChatAction>) {
+    let Some(menu) = ui.data(|data| data.get_temp::<ChatMenu>(menu_id())) else {
+        return;
+    };
+    let mut close = false;
+    let area = egui::Area::new(egui::Id::new("chat-context-popup"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(menu.pos)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_width(130.0);
+                if ui.button("Copy message").clicked() {
+                    ui.ctx().copy_text(menu.content.clone());
+                    close = true;
+                }
+                if menu.speak
+                    && ui
+                        .button("Speak")
+                        .on_hover_text("Read this answer aloud")
+                        .clicked()
+                {
+                    *action = Some(ChatAction::Speak(menu.content.clone()));
+                    close = true;
+                }
+            });
+        });
+    let clicked_outside = ui.input(|i| {
+        i.pointer.primary_clicked()
+            && i.pointer
+                .interact_pos()
+                .map_or(false, |pos| !area.response.rect.contains(pos))
+    });
+    if close || clicked_outside || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        ui.data_mut(|data| data.remove_temp::<ChatMenu>(menu_id()));
+    }
 }
 
 /// Decode an attached image once and keep the texture for later frames.
