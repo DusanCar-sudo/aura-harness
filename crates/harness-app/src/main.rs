@@ -174,6 +174,16 @@ impl App {
         let theme_choice = config.theme;
         let key_input = api_key.clone().unwrap_or_default();
 
+        // Optional deep link used by scripts and screenshot checks:
+        // AURA_HARNESS_OPEN_SESSION=<session id> opens that chat at launch.
+        let initial_session = std::env::var("AURA_HARNESS_OPEN_SESSION")
+            .ok()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .and_then(|id| {
+                Session::load(&sessions_dir().join(format!("{id}.jsonl"))).ok()
+            });
+
         let mut app = Self {
             rt: runtime,
             http: reqwest::Client::new(),
@@ -181,7 +191,7 @@ impl App {
             plugins,
             api_key,
             sessions,
-            session: None,
+            session: initial_session,
             draft: String::new(),
             focus_composer: true,
             attachments: Vec::new(),

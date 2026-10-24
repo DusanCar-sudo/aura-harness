@@ -172,6 +172,17 @@ Layout: the egui render pass lives in `src/layout.rs` (`impl eframe::App`);
 `main.rs` holds state + event plumbing. Both under the 800-line ceiling;
 `preview.rs` (836 non-test lines) is marginally over but mostly tests.
 
+**2026-10-24 (transcript):** `ui/chat.rs` now derives the transcript from the
+saved messages in chronological order (`transcript_rows`), so each tool call
+renders under the assistant turn that asked for it and the final answer is
+always last. Tool rows are one line (status, readable `$ command`, first
+result line) and click to expand; non-zero exits are warnings, not green.
+Completed turns end with `✓ Task finished · N tool calls · duration`; the top
+bar shows `Working… / Waiting for you / Error / Ready`. DeepSeek/NIM's
+`<｜DSML｜ calls>` sentinel is stripped from displayed (not saved) assistant
+text. `AURA_HARNESS_OPEN_SESSION=<id>` opens a chat at launch. 60 app + 112
+core tests green, including a headless egui paint-order test.
+
 Open items (priority order):
 
 1. DONE 2026-10-17: API streams now carry a 90s idle timeout in all three

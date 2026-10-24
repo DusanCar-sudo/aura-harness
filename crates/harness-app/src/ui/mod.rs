@@ -108,6 +108,7 @@ impl ToolCard {
         }
     }
 
+    #[cfg(test)]
     pub fn is_pending(&self) -> bool {
         self.output.is_none()
     }

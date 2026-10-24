@@ -236,9 +236,6 @@ fn current() -> Palette {
 
 // ---- accessors used by every panel ---------------------------------------
 
-pub fn card() -> Color32 {
-    current().card
-}
 pub fn field() -> Color32 {
     current().field
 }

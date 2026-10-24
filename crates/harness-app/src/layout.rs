@@ -303,13 +303,57 @@ impl eframe::App for App {
 
         // The pane's ✕ disappears with the pane, so the way back has to live
         // outside it: a permanent toggle across the top of the workspace.
+        // The same bar answers the other half of "is it done?": the chat's
+        // title on the left and a live Working / Ready chip on the right.
         egui::TopBottomPanel::top("panel-toggle-bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
+                let title = self
+                    .session
+                    .as_ref()
+                    .map(|s| s.header.title.trim())
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or("New chat");
+                ui.add(
+                    egui::Label::new(egui::RichText::new(title).color(theme::dim()).small())
+                        .truncate(),
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.toggle_value(&mut self.right_panel, "Right panel")
                         .on_hover_text(
                             "Show or hide the Files / Preview / Plugins pane · Ctrl+B",
                         );
+                    ui.separator();
+                    let waiting = self.cards.iter().any(|c| c.awaiting_approval());
+                    if waiting {
+                        ui.label(
+                            egui::RichText::new("! Waiting for you")
+                                .color(theme::warn())
+                                .small()
+                                .strong(),
+                        );
+                    } else if self.busy {
+                        ui.add(egui::Spinner::new().size(11.0).color(theme::warn()));
+                        ui.label(
+                            egui::RichText::new("Working…")
+                                .color(theme::warn())
+                                .small()
+                                .strong(),
+                        );
+                    } else if self.error.is_some() {
+                        ui.label(
+                            egui::RichText::new("! Error")
+                                .color(theme::danger())
+                                .small()
+                                .strong(),
+                        );
+                    } else {
+                        ui.label(
+                            egui::RichText::new("✓ Ready")
+                                .color(theme::ok())
+                                .small()
+                                .strong(),
+                        );
+                    }
                 });
             });
         });
