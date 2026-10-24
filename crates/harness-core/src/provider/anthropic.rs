@@ -88,16 +88,28 @@ pub fn stream_chat(
             })).collect::<Vec<_>>());
         }
 
-        let resp = http
-            .post(format!("{}/v1/messages", base_url.trim_end_matches('/')))
-            .header("x-api-key", &api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&body)
-            .send()
-            .await;
+        let resp = tokio::time::timeout(
+            crate::api::STREAM_IDLE_TIMEOUT,
+            http.post(format!("{}/v1/messages", base_url.trim_end_matches('/')))
+                .header("x-api-key", &api_key)
+                .header("anthropic-version", "2023-06-01")
+                .json(&body)
+                .send(),
+        )
+        .await;
         let resp = match resp {
-            Ok(r) => r,
-            Err(e) => { let _ = tx.send(Err(Error::Http(e))).await; return; }
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => { let _ = tx.send(Err(Error::Http(e))).await; return; }
+            Err(_) => {
+                let _ = tx.send(Err(Error::Api {
+                    status: 0,
+                    message: format!(
+                        "no response after {}s — server stalled, request dropped",
+                        crate::api::STREAM_IDLE_TIMEOUT.as_secs()
+                    ),
+                })).await;
+                return;
+            }
         };
         if !resp.status().is_success() {
             let status = resp.status().as_u16();

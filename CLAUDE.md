@@ -183,6 +183,13 @@ bar shows `Working… / Waiting for you / Error / Ready`. DeepSeek/NIM's
 text. `AURA_HARNESS_OPEN_SESSION=<id>` opens a chat at launch. 60 app + 112
 core tests green, including a headless egui paint-order test.
 
+**2026-10-24 (request timeout):** the 90s stream idle timeout covered only
+the response body. A server that accepted the connection and never sent
+headers left a turn on `Working…` forever. The initial request is now wrapped
+in the same `STREAM_IDLE_TIMEOUT` in `api.rs`,
+`provider/anthropic.rs`, and `provider/google.rs`; it reports
+`no response after 90s — server stalled` instead of hanging.
+
 Open items (priority order):
 
 1. DONE 2026-10-17: API streams now carry a 90s idle timeout in all three

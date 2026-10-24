@@ -413,16 +413,34 @@ pub fn stream_chat(
     tokio::spawn(async move {
         let body = build_body(&messages, &opts);
         let base = opts.base_url.clone().unwrap_or_else(|| API_BASE.to_string());
-        let resp = http
-            .post(format!("{}/chat/completions", base.trim_end_matches('/')))
-            .bearer_auth(api_key)
-            .json(&body)
-            .send()
-            .await;
+        // A server may accept the connection and then never send response
+        // headers. The body-stream timeout below cannot see that, so the
+        // request itself needs the same deadline or the turn hangs forever
+        // with the UI stuck on "Working…".
+        let resp = timeout(
+            STREAM_IDLE_TIMEOUT,
+            http.post(format!("{}/chat/completions", base.trim_end_matches('/')))
+                .bearer_auth(api_key)
+                .json(&body)
+                .send(),
+        )
+        .await;
         let resp = match resp {
-            Ok(r) => r,
-            Err(e) => {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
                 let _ = tx.send(Err(Error::Http(e))).await;
+                return;
+            }
+            Err(_elapsed) => {
+                let _ = tx
+                    .send(Err(Error::Api {
+                        status: 0,
+                        message: format!(
+                            "no response after {}s — server stalled, request dropped",
+                            STREAM_IDLE_TIMEOUT.as_secs()
+                        ),
+                    }))
+                    .await;
                 return;
             }
         };
