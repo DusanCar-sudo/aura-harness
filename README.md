@@ -6,6 +6,48 @@ browser tab, no Node server.
 Streaming chat with visible reasoning, rich markdown, file attachments, and
 direct access to your plugins (MCP servers and local command tools).
 
+## UI showcase
+
+<p align="center">
+  <img src="assets/readme/aura-harness-01-welcome.svg" alt="Aura Harness launch screen" width="100%" />
+</p>
+
+### 1. Welcome / launch view
+
+A centered workspace with the Aura branding, floating side rail, and the minimal
+conversation list that makes the app feel like a native workstation instead of a
+browser tab.
+
+<p align="center">
+  <img src="assets/readme/aura-harness-02-chat.svg" alt="Aura Harness chat view" width="100%" />
+</p>
+
+### 2. Streaming assistant workspace
+
+The main app shell keeps the conversation on the left, the active artifact preview
+and tools on the right, and the composer pinned at the bottom without stealing
+focus from the user.
+
+<p align="center">
+  <img src="assets/readme/aura-harness-03-settings.svg" alt="Aura Harness settings panel" width="100%" />
+</p>
+
+### 3. Settings and model controls
+
+The settings sheet exposes the model selection, reasoning effort, system prompt,
+voice stack, tool approval, and plugin configuration in a single dense but clean
+layout.
+
+<p align="center">
+  <img src="assets/readme/aura-harness-04-tools.svg" alt="Aura Harness tools and plugins" width="100%" />
+</p>
+
+### 4. Built-in tools and plugin panel
+
+The right panel surfaces built-in tools, preview modes, and plugin management so
+MCP servers and local command tools are visible and usable without leaving the
+app.
+
 ## What it is
 
 `aura-harness` is a native `egui`/`eframe` client that talks straight to the
@@ -91,7 +133,7 @@ All four honor `AURA_HARNESS_HOME` and the usual `XDG_*` variables.
 ```toml
 [mcp.mnemai]                     # MCP server over stdio
 command = "node"
-args = ["/mnt/bigdata/aura-mnemai/mcp-server.mjs"]
+args = ["/mnt/bigdata/aura-nemai/mcp-server.mjs"]
 enabled = true
 
 [cmd.today]                      # local command tool, approved per run
