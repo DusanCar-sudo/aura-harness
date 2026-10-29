@@ -1,6 +1,6 @@
 # Aura Harness
 
-The DeepSeek harness as a standalone desktop application — one Rust binary, no
+The Aura harness as a standalone desktop application — one Rust binary, no
 browser tab, no Node server.
 
 Streaming chat with visible reasoning, rich markdown, file attachments, and
