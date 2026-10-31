@@ -27,6 +27,7 @@ impl eframe::App for App {
         self.pump_analyze(ctx);
         self.pump_model_fetch(ctx);
         self.pump_voice(ctx);
+        self.pump_engine(ctx);
         // Drag-and-drop anywhere on the window attaches to the composer.
         self.absorb_dropped_files(ctx);
 
@@ -34,6 +35,29 @@ impl eframe::App for App {
         // trip (the panel's own ✕ has no way back on its own).
         if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::B)) {
             self.right_panel = !self.right_panel;
+        }
+        // Ctrl+P opens the command palette, the same shortcut as the TUI.
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::P)) {
+            self.palette.open = !self.palette.open;
+            self.palette.selected = 0;
+            self.focus_composer = true;
+        }
+        // Typing a bare "/" or ":" opens the palette; drifting into a path
+        // ("/home/…") closes it again, so pasted paths stay prompts.
+        {
+            let typed = self.draft.trim_start();
+            let first = typed.split_whitespace().next().unwrap_or("");
+            if typed == "/" || typed == ":" {
+                self.palette.open = true;
+                self.palette.selected = 0;
+            }
+            if self.palette.open {
+                let is_command_shaped = (typed.starts_with('/') || typed.starts_with(':'))
+                    && !first.trim_start_matches(&['/', ':'][..]).contains('/');
+                if typed.is_empty() || !is_command_shaped {
+                    self.palette.open = false;
+                }
+            }
         }
 
         // Repaint immediately when the theme picker moves, so it can be tried
@@ -263,8 +287,10 @@ impl eframe::App for App {
         // Composer (hidden in settings so the form gets the room).
         if self.view == View::Chat {
             let mut composer_action = None;
+            let mut palette_action = None;
             egui::TopBottomPanel::bottom("composer").show(ctx, |ui| {
                 ui.add_space(4.0);
+                palette_action = ui::palette::show(ui, &mut self.palette, &mut self.draft);
                 let recording_secs = self.recording_secs();
                 composer_action = ui::input::show(
                     ui,
@@ -299,6 +325,19 @@ impl eframe::App for App {
                 Some(ComposerAction::ToggleMic) => self.toggle_mic(ctx),
                 None => {}
             }
+
+            match palette_action {
+                Some(ui::palette::PaletteAction::Run(command)) => {
+                    self.draft.clear();
+                    self.palette.open = false;
+                    self.run_command(ctx, &command);
+                }
+                Some(ui::palette::PaletteAction::Fill(_)) => {
+                    self.palette.open = false;
+                    self.focus_composer = true;
+                }
+                None => {}
+            }
         }
 
         // The pane's ✕ disappears with the pane, so the way back has to live
@@ -327,6 +366,14 @@ impl eframe::App for App {
                     if waiting {
                         ui.label(
                             egui::RichText::new("! Waiting for you")
+                                .color(theme::warn())
+                                .small()
+                                .strong(),
+                        );
+                    } else if let Some(command) = &self.command_busy {
+                        ui.add(egui::Spinner::new().size(11.0).color(theme::warn()));
+                        ui.label(
+                            egui::RichText::new(format!("Running {command}…"))
                                 .color(theme::warn())
                                 .small()
                                 .strong(),
@@ -376,6 +423,7 @@ impl eframe::App for App {
                         busy: self.busy,
                         cache: &mut self.md_cache,
                         images: &mut self.image_cache,
+                        notes: &self.notes,
                     },
                 );
             }
@@ -527,6 +575,10 @@ impl eframe::App for App {
 
         if self.busy {
             ctx.request_repaint_after(Duration::from_millis(50));
+        } else if self.command_busy.is_some() {
+            // The engine answers on a worker thread; keep the frame alive so
+            // the spinner moves and the answer lands without a mouse move.
+            ctx.request_repaint_after(Duration::from_millis(120));
         }
     }
 }

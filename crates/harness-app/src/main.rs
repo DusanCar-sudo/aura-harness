@@ -3,6 +3,8 @@
 //! This crate owns all disk I/O (config, credentials, sessions) and the tokio
 //! runtime; `harness-core` stays GUI-free and testable.
 
+mod commands;
+mod engine_bridge;
 mod markdown;
 mod preview;
 mod theme;
@@ -142,6 +144,19 @@ pub(crate) struct App {
     pub(crate) directory: Vec<harness_core::online::OnlineEntry>,
     /// Receives GitHub README analyses for paste-to-install.
     pub(crate) analyze_rx: Option<std_mpsc::Receiver<Result<harness_core::online::DerivedPlugin, String>>>,
+
+    /// Answers from slash commands, newest last, rendered under the transcript.
+    pub(crate) notes: Vec<commands::CommandNote>,
+    /// The `/` palette: whether it is open and which row is highlighted.
+    pub(crate) palette: ui::palette::PaletteState,
+    /// The `aura sidecar` worker, started the first time a command needs it.
+    pub(crate) engine: Option<engine_bridge::EngineBridge>,
+    /// The command currently running on the engine, shown in the status line.
+    pub(crate) command_busy: Option<String>,
+    /// Read each finished answer aloud (the TUI's `:speak`).
+    pub(crate) speak_replies: bool,
+    /// Answer text waiting to be spoken once the frame can reach the context.
+    pub(crate) pending_speak: Option<String>,
 }
 
 impl App {
@@ -253,6 +268,12 @@ impl App {
             directory_rx: None,
             directory: Vec::new(),
             analyze_rx: None,
+            notes: Vec::new(),
+            palette: ui::palette::PaletteState::default(),
+            engine: None,
+            command_busy: None,
+            speak_replies: false,
+            pending_speak: None,
         };
         app.refresh_available();
 
@@ -772,6 +793,15 @@ impl App {
     // ---- sending ----------------------------------------------------------
 
     fn send(&mut self, ctx: &egui::Context) {
+        // A command is never sent to the model, and runs even while a turn is
+        // streaming — `/stop` has to work precisely then.
+        let line = self.draft.trim().to_string();
+        if !line.is_empty() && commands::is_command_input(&line) {
+            self.draft.clear();
+            self.palette.open = false;
+            self.run_command(ctx, &line);
+            return;
+        }
         if self.busy || !ui::input::is_sendable(&self.draft, self.attachments.len()) {
             return;
         }
@@ -935,6 +965,9 @@ impl App {
             self.live.freeze_reasoning_clock();
             self.persist();
         }
+        if let Some(text) = self.pending_speak.take() {
+            self.speak(text, ctx);
+        }
     }
 
     fn apply_event(&mut self, event: LoopEvent) {
@@ -977,6 +1010,9 @@ impl App {
                 self.persist();
             }
             LoopEvent::TurnComplete(message) => {
+                if self.speak_replies && !message.content.trim().is_empty() {
+                    self.pending_speak = Some(message.content.clone());
+                }
                 if let Some(session) = self.session.as_mut() {
                     session.messages.push(message);
                 }

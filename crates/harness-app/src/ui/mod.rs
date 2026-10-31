@@ -4,6 +4,7 @@ pub mod chat;
 pub mod filetree;
 pub mod input;
 pub mod model_factory;
+pub mod palette;
 pub mod plugin_browser;
 pub mod preview;
 pub mod settings;

@@ -75,6 +75,8 @@ pub struct ChatState<'a> {
     pub busy: bool,
     pub cache: &'a mut egui_commonmark::CommonMarkCache,
     pub images: &'a mut ImageCache,
+    /// Answers from slash commands — `/help`, `/sessions`, engine output.
+    pub notes: &'a [crate::commands::CommandNote],
 }
 
 pub fn show(ui: &mut Ui, state: &mut ChatState<'_>) -> Option<ChatAction> {
@@ -86,6 +88,7 @@ pub fn show(ui: &mut Ui, state: &mut ChatState<'_>) -> Option<ChatAction> {
         .show(ui, |ui| {
             if state.messages.is_empty() && state.live.is_empty() {
                 welcome(ui);
+                render_notes(ui, state.notes);
                 return;
             }
 
@@ -111,6 +114,7 @@ pub fn show(ui: &mut Ui, state: &mut ChatState<'_>) -> Option<ChatAction> {
                 }
             }
 
+            render_notes(ui, state.notes);
             render_live(ui, state);
             turn_footer(ui, state.messages, state.busy);
         });
@@ -118,6 +122,48 @@ pub fn show(ui: &mut Ui, state: &mut ChatState<'_>) -> Option<ChatAction> {
     show_message_menu(ui, &mut action);
 
     action
+}
+
+/// Command answers sit after the conversation: they are UI feedback, not part
+/// of what gets sent to the model.
+fn render_notes(ui: &mut Ui, notes: &[crate::commands::CommandNote]) {
+    for note in notes {
+        ui.add_space(6.0);
+        egui::Frame::none()
+            .fill(theme::bubble())
+            .stroke(egui::Stroke::new(
+                1.0_f32,
+                if note.error {
+                    theme::danger().gamma_multiply(0.6)
+                } else {
+                    theme::structure()
+                },
+            ))
+            .rounding(egui::Rounding::same(6.0))
+            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new(&note.title)
+                        .strong()
+                        .color(if note.error {
+                            theme::danger()
+                        } else {
+                            theme::accent()
+                        }),
+                );
+                for line in &note.lines {
+                    ui.label(
+                        RichText::new(line)
+                            .monospace()
+                            .color(if note.error {
+                                theme::danger()
+                            } else {
+                                theme::text()
+                            }),
+                    );
+                }
+            });
+    }
 }
 
 /// One line of the transcript, in the order it happened.
@@ -1083,6 +1129,7 @@ mod tests {
                     busy: false,
                     cache: &mut cache,
                     images: &mut images,
+                    notes: &[],
                 };
                 show(ui, &mut state);
             });
@@ -1096,6 +1143,7 @@ mod tests {
                     busy: false,
                     cache: &mut cache,
                     images: &mut images,
+                    notes: &[],
                 };
                 show(ui, &mut state);
             });

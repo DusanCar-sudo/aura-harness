@@ -5,6 +5,7 @@ pub mod attach;
 pub mod catalog;
 pub mod cmdtool;
 pub mod config;
+pub mod engine;
 pub mod error;
 pub mod mcp;
 pub mod models;
