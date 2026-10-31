@@ -1,10 +1,27 @@
 # Aura Harness
 
-The DeepSeek harness as a standalone desktop application — one Rust binary, no
+The Aura harness as a standalone desktop application — one Rust binary, no
 browser tab, no Node server.
 
 Streaming chat with visible reasoning, rich markdown, file attachments, and
 direct access to your plugins (MCP servers and local command tools).
+
+## Screenshots
+
+The workspace — Void/Nature background behind the window, session list on the
+left, composer with the model and effort selectors at the bottom.
+
+![Aura Harness workspace in its empty state: AURA HARNESS wordmark, session sidebar, composer](assets/readme/workspace.png)
+
+The settings sheet: built-in tool approvals, API key entry, 9 themes, optional
+background image, and the model factory.
+
+![Aura Harness settings sheet with tools, theme and model selection](assets/readme/settings.png)
+
+The voice and plugins half of the same sheet: STT/TTS backends, plugin browser,
+and the configured MCP servers and command tools.
+
+![Aura Harness voice settings and configured plugins](assets/readme/plugins.png)
 
 ## What it is
 
