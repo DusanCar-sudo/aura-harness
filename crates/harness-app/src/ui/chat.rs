@@ -235,11 +235,17 @@ fn transcript_rows<'a>(
 fn welcome(ui: &mut Ui) {
     ui.add_space(ui.available_height() * 0.28);
     ui.vertical_centered(|ui| {
-        ui.label(RichText::new("AURA HARNESS").color(theme::accent()).strong().size(28.0));
-        theme::stripes(ui, 180.0);
+        ui.label(
+            RichText::new("Aura Harness")
+                .color(theme::text())
+                .strong()
+                .size(22.0),
+        );
         ui.add_space(6.0);
         ui.label(
-            RichText::new("leanproiq.com  ·  leanroboiq.online").color(theme::dim()),
+            RichText::new("What would you like to build or inspect?")
+                .color(theme::dim())
+                .size(13.0),
         );
     });
 }
@@ -253,19 +259,12 @@ fn render_message(
     let mut action = None;
     match msg.role.as_str() {
         "user" => {
-            // Drag-select copies (egui native); these buttons are the one-tap
-            // fallbacks.
-            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                if ui.small_button("copy").clicked() {
-                    ui.ctx().copy_text(msg.content.clone());
-                }
-            });
             let bubble = egui::Frame::none()
-                .fill(theme::bubble())
-                .inner_margin(egui::Margin::same(10.0))
-                .rounding(egui::Rounding::same(6.0))
+                .fill(theme::card())
+                .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                .rounding(egui::Rounding::same(8.0))
                 .show(ui, |ui| {
-                    ui.label(RichText::new("You").color(theme::structure()).strong().small());
+                    ui.label(RichText::new("You").color(theme::dim()).small());
                     for img in &msg.images {
                         match thumbnail(ui.ctx(), images, img) {
                             Some((tex, size)) => {
@@ -289,20 +288,16 @@ fn render_message(
         }
         "assistant" => {
             let visible = display_text(&msg.content);
+            let has_reasoning = !msg.reasoning_content.trim().is_empty();
             let block = ui.scope(|ui| {
-                // Reasoning from pure tool-call rounds is process noise; keep
-                // the chain of thought only on the turn that produced an
-                // actual answer.
-                if !visible.is_empty() && !msg.reasoning_content.is_empty() {
+                if has_reasoning {
                     reasoning_block(ui, &msg.reasoning_content, None);
                 }
                 if !visible.is_empty() {
-                    // The answer must never read like another tool row: an
-                    // explicit speaker label plus breathing room separates it.
                     ui.horizontal(|ui| {
                         ui.label(
-                            RichText::new("AURA")
-                                .color(theme::accent())
+                            RichText::new("Aura")
+                                .color(theme::dim())
                                 .strong()
                                 .small(),
                         );
@@ -321,6 +316,8 @@ fn render_message(
                     });
                     markdown::show(ui, cache, &visible);
                     ui.add_space(4.0);
+                } else if !has_reasoning && msg.tool_calls.is_empty() {
+                    ui.label(RichText::new("Task completed.").color(theme::dim()).small());
                 }
             });
             note_right_click(ui, block.response.rect, msg);
@@ -651,6 +648,15 @@ fn render_call(
     let full_detail = detail.clone();
     let default_open = matches!(status, ToolStatus::Failed | ToolStatus::Warn);
 
+    let workflow_text = match status {
+        ToolStatus::Running => format!("Workflow: Running {detail} …"),
+        ToolStatus::Waiting => format!("Workflow: Approval required for {detail}"),
+        ToolStatus::Failed => format!("Workflow: Failed {detail}"),
+        ToolStatus::Warn => format!("Workflow: {detail} (warning)"),
+        ToolStatus::Stopped => format!("Workflow: Stopped {detail}"),
+        ToolStatus::Ok => format!("Workflow: {detail}"),
+    };
+
     let header_id = ui.make_persistent_id(("tool-call", call.id.as_str()));
     let state = egui::collapsing_header::CollapsingState::load_with_default_open(
         ui.ctx(),
@@ -660,35 +666,38 @@ fn render_call(
 
     let mut header_rect = egui::Rect::NOTHING;
     let header = state.show_header(ui, |ui| {
-        let color = status.color();
-        if status == ToolStatus::Running {
-            ui.add(egui::Spinner::new().size(11.0).color(color));
-        } else {
-            ui.label(RichText::new(status.glyph()).color(color).monospace().small());
-        }
-        ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            if status == ToolStatus::Running {
+                ui.add(egui::Spinner::new().size(10.0).color(theme::dim()));
+            } else {
+                let dot_color = match status {
+                    ToolStatus::Failed => theme::danger(),
+                    ToolStatus::Warn => theme::warn(),
+                    _ => theme::dim(),
+                };
+                ui.label(RichText::new("•").color(dot_color).small());
+            }
             ui.add(
                 egui::Label::new(
-                    RichText::new(&detail)
-                        .color(theme::text())
-                        .monospace()
+                    RichText::new(&workflow_text)
+                        .color(theme::dim())
                         .small(),
                 )
                 .truncate(),
             );
-            if status == ToolStatus::Running {
-                ui.label(RichText::new("running…").color(theme::dim()).small().italics());
-            } else if let Some(text) = output {
+        });
+        if let Some(text) = output {
+            if status != ToolStatus::Running {
                 if let Some(preview) = result_preview(text) {
                     ui.add(
                         egui::Label::new(
-                            RichText::new(format!("↳ {preview}")).color(theme::dim()).small(),
+                            RichText::new(format!("↳ {preview}")).color(theme::dim().gamma_multiply(0.7)).small(),
                         )
                         .truncate(),
                     );
                 }
             }
-        });
+        }
         header_rect = ui.min_rect();
     });
 
@@ -856,13 +865,13 @@ fn render_live(ui: &mut Ui, state: &mut ChatState<'_>) {
     }
     let visible = display_text(&state.live.content);
     if !visible.is_empty() {
-        ui.label(RichText::new("AURA").color(theme::accent()).strong().small());
+        ui.label(RichText::new("Aura").color(theme::dim()).strong().small());
         markdown::show(ui, state.cache, &visible);
     }
     if state.busy && visible.is_empty() {
         ui.horizontal(|ui| {
-            ui.add(egui::Spinner::new().size(12.0));
-            ui.label(RichText::new("thinking…").color(theme::dim()).italics());
+            ui.add(egui::Spinner::new().size(11.0).color(theme::dim()));
+            ui.label(RichText::new("thinking…").color(theme::dim()).small());
         });
     }
     ui.with_layout(Layout::right_to_left(Align::TOP), |_ui| {});
@@ -880,11 +889,11 @@ fn turn_footer(ui: &mut Ui, messages: &[Message], busy: bool) {
     let Some(stats) = last_turn_stats(messages) else {
         return;
     };
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     ui.separator();
     ui.horizontal(|ui| {
-        ui.label(RichText::new("✓").color(theme::ok()).strong());
-        ui.label(RichText::new("Task finished").color(theme::ok()).strong().small());
+        ui.label(RichText::new("•").color(theme::dim()));
+        ui.label(RichText::new("Task finished").color(theme::dim()).small());
         let mut meta = format!(
             "· {} tool call{}",
             stats.calls,

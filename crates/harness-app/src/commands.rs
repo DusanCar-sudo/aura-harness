@@ -903,6 +903,7 @@ fn theme_key(theme: ThemeChoice) -> &'static str {
     match theme {
         ThemeChoice::Nature => "nature",
         ThemeChoice::Midnight => "midnight",
+        ThemeChoice::ChatGpt => "chatgpt",
         ThemeChoice::Retro => "retro",
         ThemeChoice::Paper => "paper",
         ThemeChoice::Ember => "ember",
@@ -917,6 +918,7 @@ fn theme_from_name(name: &str) -> Option<ThemeChoice> {
     match name.trim().to_lowercase().as_str() {
         "nature" | "forest" | "default" => Some(ThemeChoice::Nature),
         "midnight" | "blueprint" | "matrix" => Some(ThemeChoice::Midnight),
+        "chatgpt" | "gpt" | "openai" | "zinc" | "neutral" => Some(ThemeChoice::ChatGpt),
         "retro" => Some(ThemeChoice::Retro),
         "paper" | "cream" | "gruvbox" => Some(ThemeChoice::Paper),
         "ember" => Some(ThemeChoice::Ember),

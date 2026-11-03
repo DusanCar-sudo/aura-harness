@@ -124,6 +124,8 @@ pub enum ThemeChoice {
     Nature,
     #[serde(rename = "midnight")]
     Midnight,
+    #[serde(rename = "chatgpt")]
+    ChatGpt,
     #[serde(rename = "retro")]
     Retro,
     #[serde(rename = "paper")]
@@ -142,10 +144,11 @@ pub enum ThemeChoice {
 
 impl ThemeChoice {
     /// Every theme, in the order the picker shows them.
-    pub fn all() -> [ThemeChoice; 9] {
+    pub fn all() -> [ThemeChoice; 10] {
         [
             ThemeChoice::Nature,
             ThemeChoice::Midnight,
+            ThemeChoice::ChatGpt,
             ThemeChoice::Retro,
             ThemeChoice::Paper,
             ThemeChoice::Ember,
@@ -161,6 +164,7 @@ impl ThemeChoice {
         match self {
             ThemeChoice::Nature => "Aura Nature",
             ThemeChoice::Midnight => "Midnight",
+            ThemeChoice::ChatGpt => "ChatGPT",
             ThemeChoice::Retro => "Retro",
             ThemeChoice::Paper => "Paper",
             ThemeChoice::Ember => "Ember",
@@ -176,6 +180,7 @@ impl ThemeChoice {
         match self {
             ThemeChoice::Nature => "forest dark, gold accent",
             ThemeChoice::Midnight => "cool navy, ice-blue accent",
+            ThemeChoice::ChatGpt => "neutral dark, clean slate with subtle emerald",
             ThemeChoice::Retro => "near-black, magenta accent",
             ThemeChoice::Paper => "warm cream, brass accent",
             ThemeChoice::Ember => "charcoal, ember-orange accent",

@@ -232,6 +232,20 @@ pub async fn run(input: LoopInput, events: mpsc::Sender<LoopEvent>) -> Result<()
         }
 
         let calls = pending.into_sorted();
+        let wants_tools = finish_reason.as_deref() == Some("tool_calls") || !calls.is_empty();
+
+        // If tools ran in earlier rounds and the model didn't call any new tools,
+        // but stopped with empty text (e.g. models that finish silently after tool results),
+        // synthesize a clear completion response so the turn never vanishes.
+        if round > 0 && !wants_tools && answer.trim().is_empty() {
+            answer = if !reasoning.trim().is_empty() {
+                reasoning.clone()
+            } else {
+                "Task completed successfully.".to_string()
+            };
+            let _ = events.send(LoopEvent::Content(answer.clone())).await;
+        }
+
         // Reasoning is display-only: the API rejects it echoed back, so the
         // copy kept for the UI carries it and the history copy does not.
         let display_turn = Message {
@@ -250,7 +264,6 @@ pub async fn run(input: LoopInput, events: mpsc::Sender<LoopEvent>) -> Result<()
         history.push(for_history);
         let _ = events.send(LoopEvent::TurnComplete(display_turn)).await;
 
-        let wants_tools = finish_reason.as_deref() == Some("tool_calls") || !calls.is_empty();
         if !wants_tools {
             let _ = events.send(LoopEvent::Finished { rounds: round + 1 }).await;
             return Ok(());

@@ -1244,7 +1244,10 @@ pub(crate) fn system_message(prompt: &str, root: &std::path::Path) -> String {
     let note = format!(
         "Working directory: {}. The shell starts there and relative file paths resolve against it. \
          A website's entry page should be index.html in that folder (or in dist/, out/ or \
-         public/) so the Preview tab can show it.",
+         public/) so the Preview tab can show it.\n\n\
+         Important instruction: When you use tools, after they execute you MUST always provide a \
+         final response summarizing the outcome or answering the user directly. Never end your turn \
+         with an empty response.",
         absolute_dir(root).display()
     );
     match prompt.trim() {
