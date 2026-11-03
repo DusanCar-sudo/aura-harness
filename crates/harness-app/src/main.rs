@@ -805,6 +805,7 @@ impl App {
         if self.busy || !ui::input::is_sendable(&self.draft, self.attachments.len()) {
             return;
         }
+        self.error = None;
         // Resolve provider key from the selected model_id, falling back to
         // the stored key. Makes the app model-agnostic, not DeepSeek-only.
         let resolved_key = if !self.config.model_id.trim().is_empty() {
@@ -1125,6 +1126,13 @@ impl App {
     fn remove_attachment(&mut self, i: usize) {
         if i < self.attachments.len() {
             self.attachments.remove(i);
+        }
+        if !self.attachments.iter().any(|a| a.is_image()) {
+            if let Some(err) = &self.error {
+                if err.contains("can't read images") {
+                    self.error = None;
+                }
+            }
         }
     }
 

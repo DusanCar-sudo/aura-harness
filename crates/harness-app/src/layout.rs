@@ -311,7 +311,16 @@ impl eframe::App for App {
                     ui.label(egui::RichText::new(note).color(theme::ok()).small());
                 }
                 if let Some(err) = &self.error {
-                    ui.colored_label(theme::danger(), err);
+                    let mut dismiss = false;
+                    ui.horizontal(|ui| {
+                        ui.colored_label(theme::danger(), err);
+                        if ui.small_button("✕").on_hover_text("Dismiss").clicked() {
+                            dismiss = true;
+                        }
+                    });
+                    if dismiss {
+                        self.error = None;
+                    }
                 }
                 ui.add_space(4.0);
             });

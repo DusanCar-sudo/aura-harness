@@ -501,6 +501,10 @@ pub fn supports_images(model_id: &str) -> bool {
     if id.is_empty() {
         return false;
     }
+    // GLM 5.x, GLM-4V, and Z.ai multimodal models natively support images
+    if id.contains("glm-5") || id.contains("glm-4v") || id.contains("z-ai/glm") {
+        return true;
+    }
     match crate::provider::provider_family(&id) {
         "anthropic" => true,
         "google" => true,
@@ -527,9 +531,19 @@ pub fn supports_images(model_id: &str) -> bool {
         }
         "xai" => id.contains("vision") || id.contains("grok-3") || id.contains("grok-4"),
         "openrouter" => true,
-        _ => ["vision", "-vl", "vl-", "multimodal", "omni", "llava", "pixtral"]
-            .iter()
-            .any(|p| id.contains(p)),
+        "zhipu" => id.contains("glm-5") || id.contains("glm-4v") || id.contains("vision"),
+        _ => [
+            "vision",
+            "-vl",
+            "vl-",
+            "multimodal",
+            "omni",
+            "llava",
+            "pixtral",
+            "internvl",
+        ]
+        .iter()
+        .any(|p| id.contains(p)),
     }
 }
 
@@ -983,6 +997,9 @@ mod tests {
         assert!(supports_images("deepseek-v4-flash-vision-exp"));
         assert!(supports_images("deepseek-flash"));
         assert!(supports_images("grok-vision-beta"));
+        assert!(supports_images("nvidia/z-ai/glm-5.3-flash"));
+        assert!(supports_images("nvidia/z-ai/glm-5.3"));
+        assert!(supports_images("glm-5.2"));
         assert!(!supports_images("deepseek-v4-pro"));
         assert!(!supports_images("deepseek/deepseek-chat"));
         assert!(!supports_images("gpt-3.5-turbo"));
