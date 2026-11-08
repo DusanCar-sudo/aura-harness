@@ -15,6 +15,13 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 /// Cap on stream → tools → stream rounds, so a confused model cannot spin.
 pub const MAX_TOOL_ROUNDS: usize = 150;
 
+/// Largest tool result kept in history; the UI copy is truncated separately.
+const HISTORY_TOOL_OUTPUT_CAP: usize = 30_000;
+/// Total history bytes before the oldest tool outputs are elided.
+const HISTORY_BUDGET: usize = 400_000;
+/// Newest tool results that compaction never touches.
+const KEEP_RECENT_TOOL_RESULTS: usize = 6;
+
 /// What the UI must decide before a command tool runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Approval {
@@ -75,6 +82,57 @@ pub fn truncate_for_display(s: &str, max: usize) -> String {
         end -= 1;
     }
     format!("{}… [{} bytes total]", &s[..end], s.len())
+}
+
+/// Keep the head and tail of a long tool output so the model sees both the
+/// start and the final lines (errors, exit codes) without flooding context.
+pub fn cap_for_history(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let half = max / 2;
+    let mut head = half;
+    while !s.is_char_boundary(head) {
+        head -= 1;
+    }
+    let mut tail = s.len() - half;
+    while !s.is_char_boundary(tail) {
+        tail += 1;
+    }
+    format!(
+        "{}\n[... {} bytes elided ...]\n{}",
+        &s[..head],
+        tail - head,
+        &s[tail..]
+    )
+}
+
+/// Streamed tool arguments cut off mid-JSON (token limit, dropped stream)
+/// must not run: a half-written `write_file` would clobber a file.
+pub fn arguments_are_valid(arguments: &str) -> bool {
+    arguments.trim().is_empty() || serde_json::from_str::<serde_json::Value>(arguments).is_ok()
+}
+
+/// Shrink the oldest tool outputs once history passes `budget`, keeping the
+/// newest `keep_recent` intact. Messages stay so call/result pairing holds.
+pub fn compact_history(history: &mut [Message], budget: usize, keep_recent: usize) {
+    let mut total: usize = history.iter().map(|m| m.content.len()).sum();
+    let tool_idx: Vec<usize> = history
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == "tool")
+        .map(|(i, _)| i)
+        .collect();
+    let old = tool_idx.len().saturating_sub(keep_recent);
+    for &i in &tool_idx[..old] {
+        if total <= budget {
+            break;
+        }
+        let before = history[i].content.len();
+        let note = format!("[older tool output elided: {before} bytes]");
+        total -= before.saturating_sub(note.len());
+        history[i].content = note;
+    }
 }
 
 /// A short human-readable line describing a tool call for the approval card.
@@ -192,6 +250,7 @@ pub async fn run(input: LoopInput, events: mpsc::Sender<LoopEvent>) -> Result<()
     opts.tools = registry.definitions();
 
     for round in 0..MAX_TOOL_ROUNDS {
+        compact_history(&mut history, HISTORY_BUDGET, KEEP_RECENT_TOOL_RESULTS);
         // Reasoning and session timestamps are ours; never echo them back.
         let wire: Vec<Message> = history.iter().map(Message::to_api).collect();
         let mut stream = stream_chat(http.clone(), &api_key, wire, opts.clone());
@@ -283,7 +342,14 @@ pub async fn run(input: LoopInput, events: mpsc::Sender<LoopEvent>) -> Result<()
                 })
                 .await;
 
-            let outcome = execute_tool(&registry, &mcp, call, &mut approvals).await;
+            let outcome = if arguments_are_valid(&call.function.arguments) {
+                execute_tool(&registry, &mcp, call, &mut approvals).await
+            } else {
+                Ok(format!(
+                    "[not run: the arguments for {name} were cut off and are not valid JSON. \
+                     Retry with a shorter call, e.g. write large files in several smaller steps.]"
+                ))
+            };
             let (output, is_error) = match outcome {
                 Ok(text) => (text, false),
                 Err(e) => (e.to_string(), true),
@@ -297,7 +363,10 @@ pub async fn run(input: LoopInput, events: mpsc::Sender<LoopEvent>) -> Result<()
                 })
                 .await;
 
-            history.push(Message::tool_result(call.id.clone(), output));
+            history.push(Message::tool_result(
+                call.id.clone(),
+                cap_for_history(&output, HISTORY_TOOL_OUTPUT_CAP),
+            ));
         }
     }
 
@@ -551,5 +620,43 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("not connected"));
+    }
+
+    #[test]
+    fn long_tool_output_keeps_head_and_tail_for_history() {
+        let big = format!("START{}END", "x".repeat(100_000));
+        let out = cap_for_history(&big, 1_000);
+        assert!(out.len() < 1_200, "{}", out.len());
+        assert!(out.starts_with("START") && out.ends_with("END"));
+        assert!(out.contains("elided"));
+        assert_eq!(cap_for_history("short", 1_000), "short");
+        let multi = "é".repeat(2_000); // must not split a char
+        assert!(cap_for_history(&multi, 999).contains("elided"));
+    }
+
+    #[test]
+    fn empty_or_valid_json_arguments_pass_and_broken_ones_do_not() {
+        assert!(arguments_are_valid(""));
+        assert!(arguments_are_valid("  "));
+        assert!(arguments_are_valid(r#"{"a":1}"#));
+        assert!(!arguments_are_valid(r#"{"path":"x","content":"half"#));
+    }
+
+    #[test]
+    fn compaction_elides_oldest_tool_output_and_keeps_the_tail() {
+        let mut h = vec![Message::user("task")];
+        for i in 0..10 {
+            h.push(Message::tool_result(format!("c{i}"), "y".repeat(10_000)));
+        }
+        compact_history(&mut h, 50_000, 4);
+        let total: usize = h.iter().map(|m| m.content.len()).sum();
+        assert!(total <= 50_000 + 1_000, "{total}");
+        assert_eq!(h[0].content, "task");
+        assert!(h[1].content.contains("elided"));
+        assert_eq!(h[1].tool_call_id.as_deref(), Some("c0")); // pairing survives
+        assert_eq!(h[10].content.len(), 10_000); // newest kept intact
+        let mut small = vec![Message::user("a"), Message::tool_result("c", "b")];
+        compact_history(&mut small, 50_000, 4);
+        assert_eq!(small[1].content, "b");
     }
 }
