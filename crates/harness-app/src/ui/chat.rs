@@ -15,8 +15,8 @@ use crate::markdown;
 use crate::theme;
 use crate::ui::ToolCard;
 use base64::Engine;
-use harness_core::api::{ImagePart, Message, ToolCall};
 use egui::{Align, Layout, RichText, Ui};
+use harness_core::api::{ImagePart, Message, ToolCall};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
@@ -99,14 +99,10 @@ pub fn show(ui: &mut Ui, state: &mut ChatState<'_>) -> Option<ChatAction> {
                         TranscriptRow::Message(msg) => {
                             render_message(ui, state.cache, state.images, msg)
                         }
-                        TranscriptRow::Call {
-                            call,
-                            result,
-                            card,
-                        } => render_call(ui, call, *result, *card, state.busy),
-                        TranscriptRow::Orphan(card) => {
-                            render_orphan_card(ui, card, state.busy)
+                        TranscriptRow::Call { call, result, card } => {
+                            render_call(ui, call, *result, *card, state.busy)
                         }
+                        TranscriptRow::Orphan(card) => render_orphan_card(ui, card, state.busy),
                     };
                     if result.is_some() {
                         action = result;
@@ -142,25 +138,17 @@ fn render_notes(ui: &mut Ui, notes: &[crate::commands::CommandNote]) {
             .rounding(egui::Rounding::same(6.0))
             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
             .show(ui, |ui| {
-                ui.label(
-                    RichText::new(&note.title)
-                        .strong()
-                        .color(if note.error {
-                            theme::danger()
-                        } else {
-                            theme::accent()
-                        }),
-                );
+                ui.label(RichText::new(&note.title).strong().color(if note.error {
+                    theme::danger()
+                } else {
+                    theme::accent()
+                }));
                 for line in &note.lines {
-                    ui.label(
-                        RichText::new(line)
-                            .monospace()
-                            .color(if note.error {
-                                theme::danger()
-                            } else {
-                                theme::text()
-                            }),
-                    );
+                    ui.label(RichText::new(line).monospace().color(if note.error {
+                        theme::danger()
+                    } else {
+                        theme::text()
+                    }));
                 }
             });
     }
@@ -183,10 +171,7 @@ enum TranscriptRow<'a> {
 /// skipped: their text is shown inside the call row instead of duplicating it
 /// as a second block. Cards whose call is not in the message list yet are
 /// appended so a request that is still in flight never disappears.
-fn transcript_rows<'a>(
-    messages: &'a [Message],
-    cards: &'a [ToolCard],
-) -> Vec<TranscriptRow<'a>> {
+fn transcript_rows<'a>(messages: &'a [Message], cards: &'a [ToolCard]) -> Vec<TranscriptRow<'a>> {
     let results: HashMap<&str, &Message> = messages
         .iter()
         .filter(|m| m.role == "tool")
@@ -230,7 +215,6 @@ fn transcript_rows<'a>(
     }
     rows
 }
-
 
 fn welcome(ui: &mut Ui) {
     ui.add_space(ui.available_height() * 0.28);
@@ -295,12 +279,7 @@ fn render_message(
                 }
                 if !visible.is_empty() {
                     ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Aura")
-                                .color(theme::dim())
-                                .strong()
-                                .small(),
-                        );
+                        ui.label(RichText::new("Aura").color(theme::dim()).strong().small());
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if ui.small_button("copy").clicked() {
                                 ui.ctx().copy_text(visible.to_string());
@@ -332,7 +311,12 @@ fn render_message(
                 .rounding(egui::Rounding::same(4.0))
                 .show(ui, |ui| {
                     ui.label(RichText::new("tool result").color(theme::dim()).small());
-                    ui.label(RichText::new(&msg.content).color(theme::dim()).monospace().small());
+                    ui.label(
+                        RichText::new(&msg.content)
+                            .color(theme::dim())
+                            .monospace()
+                            .small(),
+                    );
                 });
             note_right_click(ui, card.response.rect, msg);
             ui.add_space(4.0);
@@ -458,9 +442,15 @@ fn thumbnail(
         decoded
     };
     let size = egui::vec2(rgba.width() as f32, rgba.height() as f32);
-    let color =
-        egui::ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw());
-    let tex = ctx.load_texture(format!("attachment-{key}"), color, egui::TextureOptions::LINEAR);
+    let color = egui::ColorImage::from_rgba_unmultiplied(
+        [rgba.width() as usize, rgba.height() as usize],
+        rgba.as_raw(),
+    );
+    let tex = ctx.load_texture(
+        format!("attachment-{key}"),
+        color,
+        egui::TextureOptions::LINEAR,
+    );
     cache.insert(key, (tex.clone(), size));
     Some((tex, size))
 }
@@ -528,7 +518,11 @@ fn classify<'a>(
     }
     let Some(text) = output else {
         return (
-            if busy { ToolStatus::Running } else { ToolStatus::Stopped },
+            if busy {
+                ToolStatus::Running
+            } else {
+                ToolStatus::Stopped
+            },
             None,
         );
     };
@@ -540,7 +534,11 @@ fn classify<'a>(
             || text.starts_with("[user rejected")
             || card.is_some_and(|c| c.is_error && !text.contains("[exit code:"));
         return (
-            if hard { ToolStatus::Failed } else { ToolStatus::Warn },
+            if hard {
+                ToolStatus::Failed
+            } else {
+                ToolStatus::Warn
+            },
             output,
         );
     }
@@ -597,7 +595,11 @@ fn friendly_call(name: &str, arguments: &str) -> String {
 
 /// First line of `s`, trimmed to `max` characters on a char boundary.
 fn first_line(s: &str, max: usize) -> String {
-    let line = s.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let line = s
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
     if line.chars().count() <= max {
         return line.to_string();
     }
@@ -678,12 +680,8 @@ fn render_call(
                 ui.label(RichText::new("•").color(dot_color).small());
             }
             ui.add(
-                egui::Label::new(
-                    RichText::new(&workflow_text)
-                        .color(theme::dim())
-                        .small(),
-                )
-                .truncate(),
+                egui::Label::new(RichText::new(&workflow_text).color(theme::dim()).small())
+                    .truncate(),
             );
         });
         if let Some(text) = output {
@@ -691,7 +689,9 @@ fn render_call(
                 if let Some(preview) = result_preview(text) {
                     ui.add(
                         egui::Label::new(
-                            RichText::new(format!("↳ {preview}")).color(theme::dim().gamma_multiply(0.7)).small(),
+                            RichText::new(format!("↳ {preview}"))
+                                .color(theme::dim().gamma_multiply(0.7))
+                                .small(),
                         )
                         .truncate(),
                     );
@@ -764,7 +764,10 @@ fn render_call(
                     .show(ui, |ui| {
                         ui.add(
                             egui::Label::new(
-                                RichText::new(&text).color(theme::text()).monospace().small(),
+                                RichText::new(&text)
+                                    .color(theme::text())
+                                    .monospace()
+                                    .small(),
                             )
                             .wrap(),
                         );
@@ -774,7 +777,11 @@ fn render_call(
 
     // The triangle alone is a tiny target. Make the whole row toggle.
     let row_click = ui
-        .interact(header_rect, header_id.with("row-click"), egui::Sense::click())
+        .interact(
+            header_rect,
+            header_id.with("row-click"),
+            egui::Sense::click(),
+        )
         .on_hover_text(full_detail.clone())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     if row_click.clicked() {
@@ -802,8 +809,18 @@ fn render_orphan_card(ui: &mut Ui, card: &ToolCard, busy: bool) -> Option<ChatAc
     };
     if status == ToolStatus::Waiting {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(status.glyph()).color(status.color()).monospace().small());
-            ui.label(RichText::new(label).monospace().small().color(theme::text()));
+            ui.label(
+                RichText::new(status.glyph())
+                    .color(status.color())
+                    .monospace()
+                    .small(),
+            );
+            ui.label(
+                RichText::new(label)
+                    .monospace()
+                    .small()
+                    .color(theme::text()),
+            );
         });
         ui.horizontal(|ui| {
             ui.add_space(18.0);
@@ -832,7 +849,12 @@ fn render_orphan_card(ui: &mut Ui, card: &ToolCard, busy: bool) -> Option<ChatAc
         if status == ToolStatus::Running {
             ui.add(egui::Spinner::new().size(11.0).color(status.color()));
         } else {
-            ui.label(RichText::new(status.glyph()).color(status.color()).monospace().small());
+            ui.label(
+                RichText::new(status.glyph())
+                    .color(status.color())
+                    .monospace()
+                    .small(),
+            );
         }
         ui.add(
             egui::Label::new(
@@ -849,7 +871,9 @@ fn render_orphan_card(ui: &mut Ui, card: &ToolCard, busy: bool) -> Option<ChatAc
             ui.add_space(18.0);
             ui.add(
                 egui::Label::new(
-                    RichText::new(first_line(text, 150)).color(theme::dim()).small(),
+                    RichText::new(first_line(text, 150))
+                        .color(theme::dim())
+                        .small(),
                 )
                 .truncate(),
             );
@@ -925,9 +949,7 @@ fn last_turn_stats(messages: &[Message]) -> Option<TurnStats> {
         .map(|m| m.tool_calls.len())
         .sum();
     let secs = match (messages[user_idx].ts, last.ts) {
-        (Some(start), Some(end)) => Some(
-            (end - start).num_milliseconds().max(0) as f64 / 1000.0,
-        ),
+        (Some(start), Some(end)) => Some((end - start).num_milliseconds().max(0) as f64 / 1000.0),
         _ => None,
     };
     Some(TurnStats { calls, secs })
@@ -993,7 +1015,10 @@ mod tests {
             "edit src/main.rs"
         );
         // Multi-line heredocs keep only their first line in the collapsed row.
-        let heredoc = friendly_call("shell", r#"{"command":"cd /tmp\npython3 - <<'PY'\nprint(1)\nPY"}"#);
+        let heredoc = friendly_call(
+            "shell",
+            r#"{"command":"cd /tmp\npython3 - <<'PY'\nprint(1)\nPY"}"#,
+        );
         assert!(heredoc.starts_with("$ cd /tmp"), "{heredoc}");
         assert!(!heredoc.contains("print(1)"), "{heredoc}");
     }
@@ -1046,12 +1071,7 @@ mod tests {
         let user = Message::user("build it");
         let mut assistant = Message::user("");
         assistant.role = "assistant".into();
-        assistant.tool_calls = vec![ToolCall::new(
-            "c1",
-            0,
-            "shell",
-            r#"{"command":"ls"}"#,
-        )];
+        assistant.tool_calls = vec![ToolCall::new("c1", 0, "shell", r#"{"command":"ls"}"#)];
         let tool = Message::tool_result("c1", "file.txt");
         let mut answer = Message::user("done");
         answer.role = "assistant".into();
@@ -1062,11 +1082,7 @@ mod tests {
         // does not become a row of its own.
         assert_eq!(rows.len(), 4);
         match &rows[2] {
-            TranscriptRow::Call {
-                call,
-                result,
-                card,
-            } => {
+            TranscriptRow::Call { call, result, card } => {
                 assert_eq!(call.id, "c1");
                 assert_eq!(result.map(|m| m.content.as_str()), Some("file.txt"));
                 assert!(card.is_none());

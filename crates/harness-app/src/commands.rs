@@ -34,94 +34,534 @@ pub struct CommandSpec {
 /// Every command Aura Code advertises, plus the handful that are specific to
 /// the harness itself (settings, plugins, project root).
 pub const COMMANDS: &[CommandSpec] = &[
-    CommandSpec { id: "/coder", label: "Coder mode", description: "Full coding agent — tools and project context", category: "Modes" },
-    CommandSpec { id: "/gazelle", label: "Gazelle mode", description: "Lean conversation — no tools, no project context", category: "Modes" },
-    CommandSpec { id: "/id", label: "Show session ID", description: "Current chat ID", category: "Session" },
-    CommandSpec { id: "/sessions", label: "List sessions", description: "All saved sessions", category: "Session" },
-    CommandSpec { id: "/resume", label: "Resume session", description: "Resume latest session", category: "Session" },
-    CommandSpec { id: "/new", label: "New session", description: "Start fresh session", category: "Session" },
-    CommandSpec { id: "/history", label: "Show history", description: "Turn count in current session", category: "Session" },
-    CommandSpec { id: "/save", label: "Save session", description: "Rename/save current session", category: "Session" },
-    CommandSpec { id: "/sessions all", label: "Sessions everywhere", description: "Saved sessions across every project", category: "Session" },
-    CommandSpec { id: "/clear-history", label: "Clear history", description: "Wipe the conversation, keep the session id", category: "Session" },
-    CommandSpec { id: "/delete", label: "Delete a session", description: "Remove a saved session by id", category: "Session" },
-    CommandSpec { id: "/model", label: "Switch model", description: "Interactive model selector", category: "Model / API" },
-    CommandSpec { id: "/provider", label: "Provider selector", description: "Pick provider, then model", category: "Model / API" },
-    CommandSpec { id: "/apikey", label: "Set API key", description: "Set API key for session", category: "Model / API" },
-    CommandSpec { id: "/effort", label: "Reasoning effort", description: "Show or set the effort rung for this model", category: "Model / API" },
-    CommandSpec { id: "/skills", label: "List skills", description: "Skills the agent can route to", category: "Model / API" },
-    CommandSpec { id: "/workflows", label: "List workflows", description: "All saved workflows", category: "Workflows" },
-    CommandSpec { id: "/workflow", label: "Create workflow", description: "Multi-step workflow", category: "Workflows" },
-    CommandSpec { id: "/machina", label: "Machina task", description: "Self-verification + auto-retry", category: "Workflows" },
-    CommandSpec { id: "/council", label: "Council", description: "Parallel read-only specialists", category: "Workflows" },
-    CommandSpec { id: "/q add", label: "Queue task", description: "Enqueue a task", category: "Workflows" },
-    CommandSpec { id: "/q list", label: "Queue list", description: "List queued tasks", category: "Workflows" },
-    CommandSpec { id: "/resume-workflow", label: "Resume workflow", description: "Continue a paused or failed workflow", category: "Workflows" },
-    CommandSpec { id: "/ecclesia", label: "Ecclesia", description: "5 independent research agents, then a synthesis verdict", category: "Workflows" },
-    CommandSpec { id: "/nerds", label: "Nerds", description: "One writer at a time, readers in parallel", category: "Workflows" },
-    CommandSpec { id: "/marathon", label: "Marathon", description: "Flag a long haul (24h, lapses on its own)", category: "Workflows" },
-    CommandSpec { id: "/plans", label: "Execution plans", description: "Plans this project has run", category: "Workflows" },
-    CommandSpec { id: "/stop", label: "Stop the task", description: "Abort whatever is running (alias: /cancel)", category: "Workflows" },
-    CommandSpec { id: "/designx", label: "Design commission", description: "Route a style, scrape references, build the artefact", category: "Design" },
-    CommandSpec { id: "/designx styles", label: "Design lexicon", description: "List the style directions /designx routes from", category: "Design" },
-    CommandSpec { id: "/dream", label: "Dream", description: "Consolidate episodes", category: "Memory" },
-    CommandSpec { id: "/rem", label: "Show memory", description: "Reconciled memory", category: "Memory" },
-    CommandSpec { id: "/mine --refine", label: "Mine + refine patterns", description: "Mine episodes and judge concepts with the local model", category: "Memory" },
-    CommandSpec { id: "/mine --corrections", label: "Collect correction pairs", description: "Write direct correction pairs from escalation episodes", category: "Memory" },
-    CommandSpec { id: "/mine --stats", label: "Training data stats", description: "Show training-data row counts by provenance", category: "Memory" },
-    CommandSpec { id: "/research", label: "Research", description: "Multi-step research pass", category: "Memory" },
-    CommandSpec { id: "/btw", label: "Side question", description: "Quick read-only question", category: "Memory" },
-    CommandSpec { id: "/lessons", label: "Lessons learned", description: "What Aura learned and now tells herself", category: "Memory" },
-    CommandSpec { id: "/journey", label: "Learning journey", description: "Chart + list of everything Aura did and learned; Enter opens one", category: "Memory" },
-    CommandSpec { id: "/lessons timeline", label: "Learning timeline", description: "When lessons were learned, per day", category: "Memory" },
-    CommandSpec { id: "/forget", label: "Forget a lesson", description: "Remove one learned lesson from the prompt", category: "Memory" },
-    CommandSpec { id: "/confess", label: "Confess", description: "Auto-detect and confess an anomalous episode", category: "Memory" },
-    CommandSpec { id: "/confessions", label: "List confessions", description: "Everything confessed so far", category: "Memory" },
-    CommandSpec { id: "/graph", label: "Codebase graph", description: "Knowledge-graph summary (also: extract, refresh)", category: "Memory" },
-    CommandSpec { id: "/viz", label: "Memory dashboard", description: "Generate and open it (alias: /dashboard; /viz all for every project)", category: "Memory" },
-    CommandSpec { id: "/speak", label: "Toggle voice", description: "Read replies aloud", category: "Voice" },
-    CommandSpec { id: "/approve", label: "Toggle auto-approve", description: "Skip y/N prompts", category: "Safety" },
-    CommandSpec { id: "/compon", label: "Computer use on", description: "See the screen, drive mouse and keyboard (shows the disclosure)", category: "Safety" },
-    CommandSpec { id: "/compoff", label: "Computer use off", description: "Turn it off and release the input device", category: "Safety" },
-    CommandSpec { id: "/comp", label: "Computer use status", description: "Is it on, and what is holding it there", category: "Safety" },
-    CommandSpec { id: "/auraweb", label: "Open the web client", description: "Starts the browser surface and opens it (also `webaura` from a terminal)", category: "Session" },
-    CommandSpec { id: "/catchthis", label: "Catch a job", description: "Record what you do once, then have the agent repeat it", category: "Safety" },
-    CommandSpec { id: "/help", label: "Help", description: "Show all commands", category: "System" },
-    CommandSpec { id: "/archon", label: "Archimedes On", description: "Enable Archimedes Alternator for this session", category: "System" },
-    CommandSpec { id: "/archoff", label: "Archimedes Off", description: "Disable Archimedes Alternator for this session", category: "System" },
-    CommandSpec { id: "/archmodel", label: "Archimedes Model", description: "Set Archimedes local model for this session  e.g. /archmodel qwen3-vl:4b", category: "System" },
-    CommandSpec { id: "/turnsoff", label: "Turns Off", description: "Disable per-task turn limit (unlimited)", category: "System" },
-    CommandSpec { id: "/turnson", label: "Turns On", description: "Enable per-task turn limit (default: 50)", category: "System" },
-    CommandSpec { id: "/turns", label: "Turn limit", description: "Show or set the per-task turn cap", category: "System" },
-    CommandSpec { id: "/small1", label: "Start with Archimedes", description: "Bypass the competence gate for this session", category: "System" },
-    CommandSpec { id: "/cost", label: "Cost ledger", description: "Spent vs direct-large counterfactual, per outcome", category: "System" },
-    CommandSpec { id: "/q", label: "Quit", description: "Exit Aura", category: "System" },
-    CommandSpec { id: "/context", label: "Context health", description: "Token usage dashboard", category: "System" },
-    CommandSpec { id: "/doctor", label: "Doctor", description: "Run health checks", category: "System" },
-    CommandSpec { id: "/theme", label: "Theme", description: "Wear one of the Aura adOS palettes", category: "System" },
-    CommandSpec { id: "/theme sync", label: "Theme: follow adOS", description: "Wear the theme the OS is wearing", category: "System" },
-    CommandSpec { id: "/compact", label: "Force compact", description: "Manual context compaction (alias: /compress)", category: "System" },
-    CommandSpec { id: "/compress", label: "Force compress", description: "Manual context compaction (alias: /compact)", category: "System" },
-    CommandSpec { id: "/quit", label: "Quit", description: "Exit Aura (aliases: /q, /exit)", category: "System" },
-    CommandSpec { id: "/stats", label: "Session usage", description: "Tokens and cost this session (alias: /usage)", category: "Stats" },
-    CommandSpec { id: "/clear", label: "Reset usage stats", description: "Zero the counters — history untouched (alias: /reset)", category: "Stats" },
-    CommandSpec { id: "/settings", label: "Harness settings", description: "Open the harness Settings sheet", category: "System" },
-    CommandSpec { id: "/plugins", label: "Plugin browser", description: "Find and add MCP servers and command tools", category: "System" },
-    CommandSpec { id: "/root", label: "Project folder", description: "Show or set the folder the file tree and engine work in", category: "System" },
-    CommandSpec { id: "/version", label: "Version", description: "Harness and Aura engine versions", category: "System" },
-    CommandSpec { id: "/theme reset", label: "Theme: default", description: "Back to the harness default (Nature)", category: "System" },
-    CommandSpec { id: "/designx web", label: "Design: web", description: "Force a web artefact", category: "Design" },
-    CommandSpec { id: "/designx deck", label: "Design: deck", description: "Force a slide deck", category: "Design" },
-    CommandSpec { id: "/designx pdf", label: "Design: pdf", description: "Force a PDF document", category: "Design" },
-    CommandSpec { id: "/context tune", label: "Compaction ladder", description: "Adjust when compaction fires (terminal)", category: "System" },
-    CommandSpec { id: "/catchthis list", label: "Caught jobs", description: "Everything caught so far", category: "Safety" },
-    CommandSpec { id: "/catchthis show", label: "Show a caught job", description: "The steps it saw (id)", category: "Safety" },
-    CommandSpec { id: "/q run", label: "Run queued task", description: "Execute queued task #n", category: "Workflows" },
-    CommandSpec { id: "/q drop", label: "Drop queued task", description: "Remove queued task #n", category: "Workflows" },
-    CommandSpec { id: "/q clear", label: "Clear the queue", description: "Wipe the task queue", category: "Workflows" },
-    CommandSpec { id: "/lessons global", label: "Lessons: global", description: "Only global-scope lessons", category: "Memory" },
-    CommandSpec { id: "/lessons project", label: "Lessons: project", description: "Only project-scope lessons", category: "Memory" },
-    CommandSpec { id: "/menu", label: "Command palette", description: "Browse every command (Ctrl+P)", category: "System" },
+    CommandSpec {
+        id: "/coder",
+        label: "Coder mode",
+        description: "Full coding agent — tools and project context",
+        category: "Modes",
+    },
+    CommandSpec {
+        id: "/gazelle",
+        label: "Gazelle mode",
+        description: "Lean conversation — no tools, no project context",
+        category: "Modes",
+    },
+    CommandSpec {
+        id: "/id",
+        label: "Show session ID",
+        description: "Current chat ID",
+        category: "Session",
+    },
+    CommandSpec {
+        id: "/sessions",
+        label: "List sessions",
+        description: "All saved sessions",
+        category: "Session",
+    },
+    CommandSpec {
+        id: "/resume",
+        label: "Resume session",
+        description: "Resume latest session",
+        category: "Session",
+    },
+    CommandSpec {
+        id: "/new",
+        label: "New session",
+        description: "Start fresh session",
+        category: "Session",
+    },
+    CommandSpec {
+        id: "/history",
+        label: "Show history",
+        description: "Turn count in current session",
+        category: "Session",
+    },
+    CommandSpec {
+        id: "/save",
+        label: "Save session",
+        description: "Rename/save current session",
+        category: "Session",
+    },
+    CommandSpec {
+        id: "/sessions all",
+        label: "Sessions everywhere",
+        description: "Saved sessions across every project",
+        category: "Session",
+    },
+    CommandSpec {
+        id: "/clear-history",
+        label: "Clear history",
+        description: "Wipe the conversation, keep the session id",
+        category: "Session",
+    },
+    CommandSpec {
+        id: "/delete",
+        label: "Delete a session",
+        description: "Remove a saved session by id",
+        category: "Session",
+    },
+    CommandSpec {
+        id: "/model",
+        label: "Switch model",
+        description: "Interactive model selector",
+        category: "Model / API",
+    },
+    CommandSpec {
+        id: "/provider",
+        label: "Provider selector",
+        description: "Pick provider, then model",
+        category: "Model / API",
+    },
+    CommandSpec {
+        id: "/apikey",
+        label: "Set API key",
+        description: "Set API key for session",
+        category: "Model / API",
+    },
+    CommandSpec {
+        id: "/effort",
+        label: "Reasoning effort",
+        description: "Show or set the effort rung for this model",
+        category: "Model / API",
+    },
+    CommandSpec {
+        id: "/skills",
+        label: "List skills",
+        description: "Skills the agent can route to",
+        category: "Model / API",
+    },
+    CommandSpec {
+        id: "/workflows",
+        label: "List workflows",
+        description: "All saved workflows",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/workflow",
+        label: "Create workflow",
+        description: "Multi-step workflow",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/machina",
+        label: "Machina task",
+        description: "Self-verification + auto-retry",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/council",
+        label: "Council",
+        description: "Parallel read-only specialists",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/q add",
+        label: "Queue task",
+        description: "Enqueue a task",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/q list",
+        label: "Queue list",
+        description: "List queued tasks",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/resume-workflow",
+        label: "Resume workflow",
+        description: "Continue a paused or failed workflow",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/ecclesia",
+        label: "Ecclesia",
+        description: "5 independent research agents, then a synthesis verdict",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/nerds",
+        label: "Nerds",
+        description: "One writer at a time, readers in parallel",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/marathon",
+        label: "Marathon",
+        description: "Flag a long haul (24h, lapses on its own)",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/plans",
+        label: "Execution plans",
+        description: "Plans this project has run",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/stop",
+        label: "Stop the task",
+        description: "Abort whatever is running (alias: /cancel)",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/designx",
+        label: "Design commission",
+        description: "Route a style, scrape references, build the artefact",
+        category: "Design",
+    },
+    CommandSpec {
+        id: "/designx styles",
+        label: "Design lexicon",
+        description: "List the style directions /designx routes from",
+        category: "Design",
+    },
+    CommandSpec {
+        id: "/dream",
+        label: "Dream",
+        description: "Consolidate episodes",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/rem",
+        label: "Show memory",
+        description: "Reconciled memory",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/mine --refine",
+        label: "Mine + refine patterns",
+        description: "Mine episodes and judge concepts with the local model",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/mine --corrections",
+        label: "Collect correction pairs",
+        description: "Write direct correction pairs from escalation episodes",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/mine --stats",
+        label: "Training data stats",
+        description: "Show training-data row counts by provenance",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/research",
+        label: "Research",
+        description: "Multi-step research pass",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/btw",
+        label: "Side question",
+        description: "Quick read-only question",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/lessons",
+        label: "Lessons learned",
+        description: "What Aura learned and now tells herself",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/journey",
+        label: "Learning journey",
+        description: "Chart + list of everything Aura did and learned; Enter opens one",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/lessons timeline",
+        label: "Learning timeline",
+        description: "When lessons were learned, per day",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/forget",
+        label: "Forget a lesson",
+        description: "Remove one learned lesson from the prompt",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/confess",
+        label: "Confess",
+        description: "Auto-detect and confess an anomalous episode",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/confessions",
+        label: "List confessions",
+        description: "Everything confessed so far",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/graph",
+        label: "Codebase graph",
+        description: "Knowledge-graph summary (also: extract, refresh)",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/viz",
+        label: "Memory dashboard",
+        description: "Generate and open it (alias: /dashboard; /viz all for every project)",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/speak",
+        label: "Toggle voice",
+        description: "Read replies aloud",
+        category: "Voice",
+    },
+    CommandSpec {
+        id: "/approve",
+        label: "Toggle auto-approve",
+        description: "Skip y/N prompts",
+        category: "Safety",
+    },
+    CommandSpec {
+        id: "/compon",
+        label: "Computer use on",
+        description: "See the screen, drive mouse and keyboard (shows the disclosure)",
+        category: "Safety",
+    },
+    CommandSpec {
+        id: "/compoff",
+        label: "Computer use off",
+        description: "Turn it off and release the input device",
+        category: "Safety",
+    },
+    CommandSpec {
+        id: "/comp",
+        label: "Computer use status",
+        description: "Is it on, and what is holding it there",
+        category: "Safety",
+    },
+    CommandSpec {
+        id: "/auraweb",
+        label: "Open the web client",
+        description: "Starts the browser surface and opens it (also `webaura` from a terminal)",
+        category: "Session",
+    },
+    CommandSpec {
+        id: "/catchthis",
+        label: "Catch a job",
+        description: "Record what you do once, then have the agent repeat it",
+        category: "Safety",
+    },
+    CommandSpec {
+        id: "/help",
+        label: "Help",
+        description: "Show all commands",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/archon",
+        label: "Archimedes On",
+        description: "Enable Archimedes Alternator for this session",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/archoff",
+        label: "Archimedes Off",
+        description: "Disable Archimedes Alternator for this session",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/archmodel",
+        label: "Archimedes Model",
+        description: "Set Archimedes local model for this session  e.g. /archmodel qwen3-vl:4b",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/turnsoff",
+        label: "Turns Off",
+        description: "Disable per-task turn limit (unlimited)",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/turnson",
+        label: "Turns On",
+        description: "Enable per-task turn limit (default: 50)",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/turns",
+        label: "Turn limit",
+        description: "Show or set the per-task turn cap",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/small1",
+        label: "Start with Archimedes",
+        description: "Bypass the competence gate for this session",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/cost",
+        label: "Cost ledger",
+        description: "Spent vs direct-large counterfactual, per outcome",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/q",
+        label: "Quit",
+        description: "Exit Aura",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/context",
+        label: "Context health",
+        description: "Token usage dashboard",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/doctor",
+        label: "Doctor",
+        description: "Run health checks",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/theme",
+        label: "Theme",
+        description: "Wear one of the Aura adOS palettes",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/theme sync",
+        label: "Theme: follow adOS",
+        description: "Wear the theme the OS is wearing",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/compact",
+        label: "Force compact",
+        description: "Manual context compaction (alias: /compress)",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/compress",
+        label: "Force compress",
+        description: "Manual context compaction (alias: /compact)",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/quit",
+        label: "Quit",
+        description: "Exit Aura (aliases: /q, /exit)",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/stats",
+        label: "Session usage",
+        description: "Tokens and cost this session (alias: /usage)",
+        category: "Stats",
+    },
+    CommandSpec {
+        id: "/clear",
+        label: "Reset usage stats",
+        description: "Zero the counters — history untouched (alias: /reset)",
+        category: "Stats",
+    },
+    CommandSpec {
+        id: "/settings",
+        label: "Harness settings",
+        description: "Open the harness Settings sheet",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/plugins",
+        label: "Plugin browser",
+        description: "Find and add MCP servers and command tools",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/root",
+        label: "Project folder",
+        description: "Show or set the folder the file tree and engine work in",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/version",
+        label: "Version",
+        description: "Harness and Aura engine versions",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/theme reset",
+        label: "Theme: default",
+        description: "Back to the harness default (Nature)",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/designx web",
+        label: "Design: web",
+        description: "Force a web artefact",
+        category: "Design",
+    },
+    CommandSpec {
+        id: "/designx deck",
+        label: "Design: deck",
+        description: "Force a slide deck",
+        category: "Design",
+    },
+    CommandSpec {
+        id: "/designx pdf",
+        label: "Design: pdf",
+        description: "Force a PDF document",
+        category: "Design",
+    },
+    CommandSpec {
+        id: "/context tune",
+        label: "Compaction ladder",
+        description: "Adjust when compaction fires (terminal)",
+        category: "System",
+    },
+    CommandSpec {
+        id: "/catchthis list",
+        label: "Caught jobs",
+        description: "Everything caught so far",
+        category: "Safety",
+    },
+    CommandSpec {
+        id: "/catchthis show",
+        label: "Show a caught job",
+        description: "The steps it saw (id)",
+        category: "Safety",
+    },
+    CommandSpec {
+        id: "/q run",
+        label: "Run queued task",
+        description: "Execute queued task #n",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/q drop",
+        label: "Drop queued task",
+        description: "Remove queued task #n",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/q clear",
+        label: "Clear the queue",
+        description: "Wipe the task queue",
+        category: "Workflows",
+    },
+    CommandSpec {
+        id: "/lessons global",
+        label: "Lessons: global",
+        description: "Only global-scope lessons",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/lessons project",
+        label: "Lessons: project",
+        description: "Only project-scope lessons",
+        category: "Memory",
+    },
+    CommandSpec {
+        id: "/menu",
+        label: "Command palette",
+        description: "Browse every command (Ctrl+P)",
+        category: "System",
+    },
 ];
 
 /// A command's answer, rendered in the transcript.
@@ -218,7 +658,10 @@ pub fn matches(head: &str) -> Vec<&'static CommandSpec> {
     if out.is_empty() {
         out = COMMANDS
             .iter()
-            .filter(|c| c.id.trim_start_matches('/').starts_with(&format!("{head} ")))
+            .filter(|c| {
+                c.id.trim_start_matches('/')
+                    .starts_with(&format!("{head} "))
+            })
             .collect();
     }
     out
@@ -347,13 +790,11 @@ impl App {
                 .join("  ·  ");
             self.note_error(
                 format!("/{} — unknown command", parsed.head),
-                vec![
-                    if hint.is_empty() {
-                        "Open the palette with /help or Ctrl+P.".to_string()
-                    } else {
-                        format!("Did you mean:  {hint}")
-                    },
-                ],
+                vec![if hint.is_empty() {
+                    "Open the palette with /help or Ctrl+P.".to_string()
+                } else {
+                    format!("Did you mean:  {hint}")
+                }],
             );
             return true;
         }
@@ -373,10 +814,7 @@ impl App {
                 let mut lines = Vec::new();
                 for h in self.sessions.iter().take(60) {
                     let created = h.created.with_timezone(&chrono::Local);
-                    let current = self
-                        .session
-                        .as_ref()
-                        .is_some_and(|s| s.header.id == h.id);
+                    let current = self.session.as_ref().is_some_and(|s| s.header.id == h.id);
                     lines.push(format!(
                         "{} {:36}  {}",
                         if current { "▸" } else { " " },
@@ -414,7 +852,9 @@ impl App {
                             self.open_session(&latest);
                             self.note("Resumed the latest session", vec![self.session_id_line()]);
                         }
-                        None => self.note_error("Nothing to resume", vec!["No saved sessions.".into()]),
+                        None => {
+                            self.note_error("Nothing to resume", vec!["No saved sessions.".into()])
+                        }
                     },
                 }
             }
@@ -438,7 +878,10 @@ impl App {
             }
             "save" => {
                 let title = if arg.trim().is_empty() {
-                    self.session.as_ref().map(|s| s.header.title.clone()).unwrap_or_default()
+                    self.session
+                        .as_ref()
+                        .map(|s| s.header.title.clone())
+                        .unwrap_or_default()
                 } else {
                     arg.trim().to_string()
                 };
@@ -462,11 +905,7 @@ impl App {
                     .session
                     .as_ref()
                     .map(|s| {
-                        let turns = s
-                            .messages
-                            .iter()
-                            .filter(|m| m.role == "user")
-                            .count();
+                        let turns = s.messages.iter().filter(|m| m.role == "user").count();
                         let results = s.messages.iter().filter(|m| m.role == "tool").count();
                         (turns, results)
                     })
@@ -515,7 +954,10 @@ impl App {
                         Ok(()) => {
                             self.api_key = Some(arg.trim().to_string());
                             self.key_input = arg.trim().to_string();
-                            self.note("API key saved", vec!["Persisted to the harness credentials file.".into()]);
+                            self.note(
+                                "API key saved",
+                                vec!["Persisted to the harness credentials file.".into()],
+                            );
                         }
                         Err(e) => self.note_error("Could not save the key", vec![e.to_string()]),
                     }
@@ -566,7 +1008,8 @@ impl App {
                 self.note(
                     "Auto-approve",
                     vec![if next {
-                        "ON — tools run without asking. Dangerous commands are still blocked.".into()
+                        "ON — tools run without asking. Dangerous commands are still blocked."
+                            .into()
                     } else {
                         "OFF — mutating tools ask for approval again.".into()
                     }],
@@ -602,9 +1045,7 @@ impl App {
                     .engine
                     .as_ref()
                     .map(|b| b.binary().to_string())
-                    .or_else(|| {
-                        crate::engine_bridge::find_aura_binary()
-                    })
+                    .or_else(|| crate::engine_bridge::find_aura_binary())
                     .unwrap_or_else(|| "not found".into());
                 self.note(
                     format!("Aura Harness {}", env!("CARGO_PKG_VERSION")),
@@ -618,7 +1059,11 @@ impl App {
                     format!("model:   {}", models::display_name(&model)),
                     format!("effort:  {}", effort_label(self.effort)),
                     format!("project: {root}"),
-                    format!("tools:   {}  ·  plugins: {} MCP", self.registry.len(), self.mcp_status.len()),
+                    format!(
+                        "tools:   {}  ·  plugins: {} MCP",
+                        self.registry.len(),
+                        self.mcp_status.len()
+                    ),
                     self.session_id_line(),
                 ];
                 if let Some(s) = &self.session {
@@ -628,14 +1073,17 @@ impl App {
                 if let Some(busy) = &self.command_busy {
                     lines.push(format!("engine:  running {busy}"));
                 }
-                lines.push("Token/cost totals are kept by the engine — /cost reads its ledger.".into());
+                lines.push(
+                    "Token/cost totals are kept by the engine — /cost reads its ledger.".into(),
+                );
                 self.note("Session", lines);
             }
             "compact" | "compress" => {
                 self.note_error(
                     "Compaction",
                     vec![
-                        "The harness does not compact: it sends the conversation as it stands.".into(),
+                        "The harness does not compact: it sends the conversation as it stands."
+                            .into(),
                         "Use /new to start a fresh context.".into(),
                     ],
                 );
@@ -959,8 +1407,7 @@ mod tests {
     #[test]
     fn every_advertised_command_parses_back_to_itself() {
         for spec in COMMANDS {
-            let parsed = parse(spec.id)
-                .unwrap_or_else(|| panic!("{} does not parse", spec.id));
+            let parsed = parse(spec.id).unwrap_or_else(|| panic!("{} does not parse", spec.id));
             assert!(
                 is_known(&parsed.head),
                 "{} parses to unknown head {}",
@@ -973,10 +1420,26 @@ mod tests {
     #[test]
     fn the_full_tui_palette_is_present() {
         for id in [
-            "/dream", "/mine --refine", "/research", "/designx", "/council",
-            "/ecclesia", "/marathon", "/catchthis", "/lessons timeline",
-            "/forget", "/machina", "/graph", "/viz", "/workflows", "/cost",
-            "/doctor", "/archon", "/compon", "/btw", "/journey",
+            "/dream",
+            "/mine --refine",
+            "/research",
+            "/designx",
+            "/council",
+            "/ecclesia",
+            "/marathon",
+            "/catchthis",
+            "/lessons timeline",
+            "/forget",
+            "/machina",
+            "/graph",
+            "/viz",
+            "/workflows",
+            "/cost",
+            "/doctor",
+            "/archon",
+            "/compon",
+            "/btw",
+            "/journey",
         ] {
             let present = COMMANDS.iter().any(|c| c.id == id)
                 || COMMANDS.iter().any(|c| c.id.starts_with(&format!("{id} ")));

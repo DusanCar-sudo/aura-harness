@@ -1,0 +1,18 @@
+# dependencies
+node_modules/
+
+# secrets / local env
+.env*
+.vercel
+
+# local working artifacts (paper extraction, screenshots, Chrome profiles, QA)
+.work/
+
+# image-generation working files (final plates are tracked under assets/img/art/)
+assets/img/art/_build/
+assets/img/art/_tmp/
+assets/img/art/raw/
+
+# OS noise
+.DS_Store
+Thumbs.db

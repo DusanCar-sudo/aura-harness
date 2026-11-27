@@ -1,0 +1,404 @@
+{
+  "brand": "Lean Robotics IQ",
+  "art": [
+    {
+      "file": "hero-atlas.jpg",
+      "concept": "hero-atlas: robot in an immense archive of index-card drawers / atlas of paper",
+      "dimensions": [
+        1024,
+        1280
+      ],
+      "bytes": 251878,
+      "format": "JPEG progressive q80",
+      "treatment": "bone-paper duotone + halftone + grain",
+      "source_raw": "raw/hero/p1_s222.png",
+      "prompt": "vintage scientific engraving, a small humanoid robot standing in an immense archive of index card drawers, endless card catalogue wall, shafts of light, high contrast ink illustration, calm empty foreground",
+      "seed": 222,
+      "generation": {
+        "size": [
+          512,
+          640
+        ],
+        "steps": 1,
+        "cfg": 1.0,
+        "sampler": "euler"
+      },
+      "post": {
+        "contrast": 1.5,
+        "gamma": 1.1,
+        "soften": 1.2,
+        "flatten": 3,
+        "levels": 9,
+        "grain": 4.0,
+        "subsampling": 2,
+        "centering": [
+          0.5,
+          0.5
+        ],
+        "seed": 7,
+        "map_name": "duotone-bone"
+      },
+      "notes": "Archive-corridor concept (lead lock). 4:5 crop is native, no reframing needed; robot stands in a card-catalogue canyon with light shaft, bone paper in the lit corridor, deep ink in the shelves. Camera-render source is on-brand for the 1-step model's 'mistake but composed' look.",
+      "alternatives": [
+        "raw/hero/p1_s111.png (mirrored/denser shelf texture)",
+        "raw/hero/p1_s333.png (robot closer, tighter crop)",
+        "raw/hero/p4_s111.png (paper stacks canyon; more literal paper but busier)"
+      ]
+    },
+    {
+      "file": "loop.jpg",
+      "concept": "loop: machine feeding paper into itself / circular mechanism (recursive learning)",
+      "dimensions": [
+        1200,
+        800
+      ],
+      "bytes": 153379,
+      "format": "JPEG progressive q82",
+      "treatment": "bone-paper duotone + halftone + grain",
+      "source_raw": "raw/loop/loop_v0s5051.png",
+      "prompt": "risograph poster, two ink colours orange and black on beige paper, a machine feeding a strip of paper into itself, circular loop mechanism with rollers and gears, flat shapes, halftone, high contrast, minimal composition, generous negative space",
+      "seed": 5051,
+      "generation": {
+        "size": [
+          576,
+          384
+        ],
+        "steps": 1,
+        "cfg": 1.0,
+        "sampler": "euler"
+      },
+      "post": {
+        "contrast": 1.5,
+        "gamma": 0.72,
+        "soften": 1.2,
+        "flatten": 3,
+        "levels": 10,
+        "grain": 4.0,
+        "subsampling": 2,
+        "centering": [
+          0.5,
+          0.5
+        ],
+        "seed": 7,
+        "map_name": "duotone-bone",
+        "lift": 0.1
+      },
+      "notes": "Concentric gear mechanism shot like a vintage plate on pale stock; circular self-reference reads as the recursive loop. High-key lifted tone keeps the paper calm.",
+      "alternatives": [
+        "raw/loop/loop_v1s5112.png (gear + loose paper sheets, more diagonal/washed)",
+        "raw/loop/loop_v0s5001.png (multiple meshing cogs, busier)"
+      ]
+    },
+    {
+      "file": "gate.jpg",
+      "concept": "gate: small brass instrument displacing liquid from a large vessel, gauges (Archimedes)",
+      "dimensions": [
+        1200,
+        800
+      ],
+      "bytes": 109417,
+      "format": "JPEG progressive q82",
+      "treatment": "ink-to-signal-orange duotone + halftone + grain",
+      "source_raw": "raw/gate/gate_v0s5001.png",
+      "prompt": "risograph poster, two ink colours orange and black on beige paper, a small brass instrument displacing liquid from a large vessel, measuring gauges and dials, archimedes principle diagram, flat shapes, halftone, high contrast, minimal composition, generous negative space",
+      "seed": 5001,
+      "generation": {
+        "size": [
+          576,
+          384
+        ],
+        "steps": 1,
+        "cfg": 1.0,
+        "sampler": "euler"
+      },
+      "post": {
+        "contrast": 1.3,
+        "gamma": 0.95,
+        "soften": 1.0,
+        "flatten": 3,
+        "levels": 12,
+        "grain": 3.0,
+        "subsampling": 2,
+        "centering": [
+          0.5,
+          0.5
+        ],
+        "seed": 7,
+        "map_name": "duotone-orange"
+      },
+      "notes": "Thin-line instrument/vessel diagram on signal-orange stock, ink drawing floating with generous negative space; the plate reads as a lab notebook record of the Archimedes principle.",
+      "alternatives": [
+        "raw/gate/gate_v0s5051.png (bolder orange dish + tower; stronger mass, less negative space)"
+      ]
+    },
+    {
+      "file": "dataset.jpg",
+      "concept": "dataset: specimen archive, labelled drawers, catalogue cards, surreal",
+      "dimensions": [
+        1200,
+        800
+      ],
+      "bytes": 192252,
+      "format": "JPEG progressive q82",
+      "treatment": "bone-paper duotone + halftone + grain",
+      "source_raw": "raw/dataset/dataset_v0s5051.png",
+      "prompt": "risograph poster, two ink colours orange and black on beige paper, specimen archive of labelled wooden drawers and catalogue cards, surreal orderly cabinet wall, flat shapes, halftone, high contrast, minimal composition, generous negative space",
+      "seed": 5051,
+      "generation": {
+        "size": [
+          576,
+          384
+        ],
+        "steps": 1,
+        "cfg": 1.0,
+        "sampler": "euler"
+      },
+      "post": {
+        "contrast": 1.5,
+        "gamma": 0.8,
+        "soften": 1.1,
+        "flatten": 3,
+        "levels": 10,
+        "grain": 4.0,
+        "subsampling": 2,
+        "centering": [
+          0.5,
+          0.5
+        ],
+        "seed": 7,
+        "map_name": "duotone-bone",
+        "lift": 0.07
+      },
+      "notes": "Open catalogue cabinet with drawers, cards and label plates: orderly specimen-archive read, pale paper, ink shadows in the drawer bays.",
+      "alternatives": [
+        "raw/dataset/dataset_v1s5112.png (open archival box with loose sheets; has line-scribble pages)",
+        "raw/dataset/dataset_v0s5001.png (full wooden drawer unit, warmer)"
+      ]
+    },
+    {
+      "file": "verify.jpg",
+      "concept": "verify: mechanical/optical inspection of a paper sheet at a workbench (verifier)",
+      "dimensions": [
+        1200,
+        800
+      ],
+      "bytes": 152523,
+      "format": "JPEG progressive q82",
+      "treatment": "bone-paper duotone + halftone + grain",
+      "source_raw": "raw/verify/verify_v0s5001.png",
+      "prompt": "risograph poster, two ink colours orange and black on beige paper, mechanical optical inspection of a paper sheet on a workbench, lens and calipers and dial gauges, flat shapes, halftone, high contrast, minimal composition, generous negative space",
+      "seed": 5001,
+      "generation": {
+        "size": [
+          576,
+          384
+        ],
+        "steps": 1,
+        "cfg": 1.0,
+        "sampler": "euler"
+      },
+      "post": {
+        "contrast": 1.5,
+        "gamma": 0.8,
+        "soften": 1.1,
+        "flatten": 3,
+        "levels": 10,
+        "grain": 4.0,
+        "subsampling": 2,
+        "centering": [
+          0.5,
+          0.5
+        ],
+        "seed": 7,
+        "map_name": "duotone-bone",
+        "lift": 0.07
+      },
+      "notes": "Bench with inspection drum, gauge face and a paper sheet under the arm; the gauge circle doubles as the print's single bold shape. Small illegible tick-writing on the sheet margin is part of the archival prop, not page copy.",
+      "alternatives": [
+        "raw/verify/verify_v0s5051.png (machine over an orange bed plate; more abstract, no paper)",
+        "raw/verify/verify_v1s5112.png (flat scanner-like unit, very abstract)"
+      ]
+    },
+    {
+      "file": "lang.jpg",
+      "concept": "lang: tower of carved blocks/symbols wired to a robot hand (languages)",
+      "dimensions": [
+        1000,
+        1000
+      ],
+      "bytes": 127926,
+      "format": "JPEG progressive q82",
+      "treatment": "bone-paper duotone + halftone + grain",
+      "source_raw": "raw/lang/lang_v1s5112.png",
+      "prompt": "riso zine illustration, two colour print, orange and black ink on cream paper, bold flat shapes, a tall stack of carved symbol blocks connected by wires to a mechanical robot hand, high contrast, generous negative space, grainy print",
+      "seed": 5112,
+      "generation": {
+        "size": [
+          512,
+          512
+        ],
+        "steps": 1,
+        "cfg": 1.0,
+        "sampler": "euler"
+      },
+      "post": {
+        "contrast": 1.5,
+        "gamma": 0.8,
+        "soften": 1.1,
+        "flatten": 3,
+        "levels": 10,
+        "grain": 4.0,
+        "subsampling": 2,
+        "centering": [
+          0.5,
+          0.5
+        ],
+        "seed": 7,
+        "map_name": "duotone-bone",
+        "lift": 0.07
+      },
+      "notes": "Block tower with abstract carved symbol panels and a wire/thin limb reaching to it; no legible glyphs in this variant (the v0 tower variants carry letter-like marks and were rejected for the no-text rule).",
+      "alternatives": [
+        "raw/lang/lang_v0s5001.png (more literal stone tower but rows of letter-like glyphs - text risk)",
+        "raw/lang/lang_v1s5162.png (second seed of the same block-tower idea)"
+      ]
+    },
+    {
+      "file": "paper.jpg",
+      "concept": "paper: forensic ledger / study table, evidence of failure, artifacts (audit)",
+      "dimensions": [
+        1400,
+        900
+      ],
+      "bytes": 183816,
+      "format": "JPEG progressive q82",
+      "treatment": "bone-paper duotone + halftone + grain",
+      "source_raw": "raw/paper/paper_v0s5051.png",
+      "prompt": "risograph poster, two ink colours orange and black on beige paper, forensic study table with an open ledger and scattered paper evidence, magnifying glass, vintage archive, flat shapes, halftone, high contrast, minimal composition, generous negative space",
+      "seed": 5051,
+      "generation": {
+        "size": [
+          576,
+          368
+        ],
+        "steps": 1,
+        "cfg": 1.0,
+        "sampler": "euler"
+      },
+      "post": {
+        "contrast": 1.5,
+        "gamma": 0.65,
+        "soften": 1.1,
+        "flatten": 3,
+        "levels": 10,
+        "grain": 4.0,
+        "subsampling": 2,
+        "centering": [
+          0.5,
+          0.5
+        ],
+        "seed": 7,
+        "map_name": "duotone-bone",
+        "lift": 0.12
+      },
+      "notes": "Framed forensic desk plate: papers fanned under a clamp/magnifier tool, blank sheets (illegible ruled texture only), high-key bone stock with a heavy ink tool shape. Reads as an audit evidence table rather than a product shot.",
+      "alternatives": [
+        "raw/paper/paper_v1s5162.png (open ledger with fanned pages, cleaner/emptier)",
+        "raw/paper/paper_v1s5112.png (single big white ledger, most minimal)"
+      ]
+    },
+    {
+      "file": "og.jpg",
+      "concept": "og: strong text-free social-card crop of the hero archive corridor, signal-orange duotone",
+      "dimensions": [
+        1200,
+        630
+      ],
+      "bytes": 107245,
+      "format": "JPEG progressive q82",
+      "treatment": "ink-to-signal-orange duotone + halftone + grain",
+      "source_raw": "raw/hero/p1_s222.png",
+      "prompt": "vintage scientific engraving, a small humanoid robot standing in an immense archive of index card drawers, endless card catalogue wall, shafts of light, high contrast ink illustration, calm empty foreground",
+      "seed": 222,
+      "generation": {
+        "size": [
+          512,
+          640
+        ],
+        "steps": 1,
+        "cfg": 1.0,
+        "sampler": "euler"
+      },
+      "post": {
+        "contrast": 1.4,
+        "gamma": 0.9,
+        "soften": 1.2,
+        "flatten": 3,
+        "levels": 10,
+        "grain": 3.0,
+        "subsampling": 2,
+        "centering": [
+          0.5,
+          0.3
+        ],
+        "seed": 7,
+        "map_name": "duotone-orange"
+      },
+      "notes": "Wide 1.9:1 crop of the same archive-corridor plate as hero-atlas (crop window biased up so the whole head stays in frame), printed in signal-orange ink: direct visual continuity with the hero and a clear robot silhouette that survives 1200x630 thumbnail scale. No text, no faces.",
+      "alternatives": [
+        "raw/og/og_v1s5162.png (two blocky robots, orange field; more playful, busier silhouette)",
+        "raw/gate/gate_v0s5001.png (reuse gate plate as diagram-style card base)"
+      ]
+    },
+    {
+      "file": "grain.jpg",
+      "concept": "grain: subtle paper-grain texture tile",
+      "dimensions": [
+        512,
+        512
+      ],
+      "bytes": 16064,
+      "format": "JPEG progressive q80",
+      "treatment": "synthesised seamless paper stock: FFT band-limited bone-paper fibre + fine weave + grain, no model generation",
+      "source_raw": null,
+      "prompt": null,
+      "seed": 2026,
+      "generation": {
+        "model": "numpy/PIL synthesis (grain.py)",
+        "size": [
+          512,
+          512
+        ]
+      },
+      "post": {
+        "base": "#EFEAE0",
+        "noise_amplitude": 9.0,
+        "weave_amplitude": 2.0,
+        "blur": 0.25
+      },
+      "notes": "Tileable 512x512 bone stock texture, tuned subtle (~16KB) so it can sit behind type or be blended over plates.",
+      "alternatives": []
+    }
+  ],
+  "generated_with": {
+    "model": "SDXS-512 (sdxs.safetensors, stable-diffusion.cpp)",
+    "endpoint": "http://127.0.0.1:8190/sdapi/v1/txt2img",
+    "native_stats": "steps=1, cfg=1.0, sampler=euler, 512-class canvas",
+    "post": "Lanczos upscale/crop -> grayscale -> soften/flatten -> autocontrast -> tone curve -> FS-dithered palette quantise (halftone) -> film grain -> JPEG"
+  },
+  "contact_sheet": "contact-sheet.jpg",
+  "raw_candidates_dir": "raw/",
+  "raw_candidates_note": "34 alternative seed/prompt renders in raw/<concept>/ (native model output, untouched).",
+  "brand_colours": {
+    "ink": "#0D0F0E",
+    "bone": "#EFEAE0",
+    "signal_orange": "#E8502A",
+    "lime": "#C8F04B (not used in this set)"
+  },
+  "weak_plates": [
+    "dataset.jpg - the cabinet reads more mid-century sideboard than specimen archive at a glance; treatment is clean but subject is the least 'surreal' of the set.",
+    "loop.jpg - framed plate border from the source render is kept; the gear has one malformed tooth cluster lower-right (1-step model artefact, reads as print damage).",
+    "lang.jpg - the block-tower symbols are abstract glyph-like shapes rather than a legible alphabet; the reaching limb is cropped at frame edge by design.",
+    "verify.jpg - tiny illegible signature scribble in the bottom-right margin of the source render; below display-size legibility threshold, left untouched."
+  ]
+}

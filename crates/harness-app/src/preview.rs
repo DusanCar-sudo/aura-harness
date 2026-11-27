@@ -122,30 +122,30 @@ fn web_target(root: &Path) -> Option<Target> {
         return None;
     }
     {
-    let mut web_dirs: Vec<PathBuf> = vec![
-        root.to_path_buf(),
-        root.join("dist"),
-        root.join("build").join("web"),
-        root.join("build").join("www"),
-        root.join("out"),
-        root.join("public"),
-        root.join("target").join("www"),
-        root.join("site"),
-        root.join("docs"),
-        root.join("_site"),
-        root.join("build").join("webapp"),
-    ];
-    for d in &web_dirs {
-        if d.join("index.html").is_file() {
-            return Some(Target::Web { root: d.clone() });
+        let mut web_dirs: Vec<PathBuf> = vec![
+            root.to_path_buf(),
+            root.join("dist"),
+            root.join("build").join("web"),
+            root.join("build").join("www"),
+            root.join("out"),
+            root.join("public"),
+            root.join("target").join("www"),
+            root.join("site"),
+            root.join("docs"),
+            root.join("_site"),
+            root.join("build").join("webapp"),
+        ];
+        for d in &web_dirs {
+            if d.join("index.html").is_file() {
+                return Some(Target::Web { root: d.clone() });
+            }
         }
-    }
-    // A shallow sweep for an index.html in an unconventional spot.
-    if let Some(found) = find_file(root, "index.html", 3) {
-        return Some(Target::Web { root: found });
-    }
-    web_dirs.clear();
-    None
+        // A shallow sweep for an index.html in an unconventional spot.
+        if let Some(found) = find_file(root, "index.html", 3) {
+            return Some(Target::Web { root: found });
+        }
+        web_dirs.clear();
+        None
     }
 }
 
@@ -200,7 +200,9 @@ fn find_file(root: &Path, name: &str, max_depth: usize) -> Option<PathBuf> {
         if depth >= max_depth {
             continue;
         }
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() && !skipped(&e.file_name().to_string_lossy()) {
@@ -222,7 +224,9 @@ fn find_ext(root: &Path, ext: &str, max_depth: usize) -> Option<PathBuf> {
         if seen > 3000 {
             break;
         }
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -260,14 +264,24 @@ fn is_gradle_project(root: &Path) -> bool {
 
 /// Look for something executable that could be the game.
 fn find_game_binary(root: &Path) -> Option<(PathBuf, String)> {
-    const DIRS: &[&str] = &[".", "target/release", "target/debug", "bin", "build", "dist", "out"];
+    const DIRS: &[&str] = &[
+        ".",
+        "target/release",
+        "target/debug",
+        "bin",
+        "build",
+        "dist",
+        "out",
+    ];
     for d in DIRS {
         let dir = if *d == "." {
             root.to_path_buf()
         } else {
             root.join(d)
         };
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if !p.is_file() {
@@ -294,7 +308,11 @@ fn find_game_binary(root: &Path) -> Option<(PathBuf, String)> {
 /// Windows/game binaries keep an extension; Unix ones usually do not.
 fn is_likely_binary_name(name: &str) -> bool {
     matches!(
-        name.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str(),
+        name.rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str(),
         "exe" | "appimage" | "bin" | "x86_64" | "elf"
     )
 }
@@ -317,15 +335,25 @@ fn is_executable(p: &Path) -> bool {
 /// even before anything has been built.
 fn game_from_manifest(root: &Path) -> Option<String> {
     let engines = [
-        ("Cargo.toml", &["bevy", "ggez", "macroquad", "miniquad", "raylib", "tetra"][..]),
-        ("package.json", &["phaser", "\"three\"", "pixi.js", "playcanvas", "babylonjs"][..]),
+        (
+            "Cargo.toml",
+            &["bevy", "ggez", "macroquad", "miniquad", "raylib", "tetra"][..],
+        ),
+        (
+            "package.json",
+            &["phaser", "\"three\"", "pixi.js", "playcanvas", "babylonjs"][..],
+        ),
     ];
     for (file, needles) in engines {
         let Ok(text) = std::fs::read_to_string(root.join(file)) else {
             continue;
         };
         if needles.iter().any(|n| text.contains(n)) {
-            let kind = if file == "Cargo.toml" { "Rust game" } else { "JS game" };
+            let kind = if file == "Cargo.toml" {
+                "Rust game"
+            } else {
+                "JS game"
+            };
             return Some(format!("{kind} ({file})"));
         }
     }
@@ -434,11 +462,7 @@ fn serve<S: std::io::Read + std::io::Write>(sock: &mut S, root: &Path) -> std::i
 
 /// Strip query/fragment and percent-decode the path.
 fn url_path(target: &str) -> String {
-    let bare = target
-        .split(['?', '#'])
-        .next()
-        .unwrap_or("/")
-        .to_string();
+    let bare = target.split(['?', '#']).next().unwrap_or("/").to_string();
     percent_decode(&bare)
 }
 
@@ -558,7 +582,8 @@ pub fn headless_shell() -> Option<PathBuf> {
         for e in rd.flatten() {
             let d = e.path();
             for cand in [
-                d.join("chrome-headless-shell-linux64").join("chrome-headless-shell"),
+                d.join("chrome-headless-shell-linux64")
+                    .join("chrome-headless-shell"),
                 d.join("chrome-linux64").join("chrome"),
                 d.join("chrome-linux").join("chrome"),
             ] {
@@ -568,7 +593,12 @@ pub fn headless_shell() -> Option<PathBuf> {
             }
         }
     }
-    which(&["chromium", "chromium-browser", "google-chrome", "google-chrome-stable"])
+    which(&[
+        "chromium",
+        "chromium-browser",
+        "google-chrome",
+        "google-chrome-stable",
+    ])
 }
 
 /// Resolve a program name against `$PATH`.
@@ -765,9 +795,12 @@ pub fn pick_view(tree: &serde_json::Value, hint: &str) -> Option<(i32, i32, u32,
                     ]
                     .join(" ")
                     .to_lowercase();
-                    let focused = node.get("focused").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let harness = haystack.contains("aura harness")
-                        || haystack.contains("aura-harness");
+                    let focused = node
+                        .get("focused")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let harness =
+                        haystack.contains("aura harness") || haystack.contains("aura-harness");
                     if !harness {
                         if focused {
                             f.focused_other = Some((x, y, w, h));
@@ -814,7 +847,9 @@ pub fn changed_since(root: &Path, since: SystemTime) -> bool {
         if seen > 4000 {
             return false;
         }
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -928,10 +963,7 @@ mod tests {
         assert_eq!(mime_for(Path::new("style.css")), "text/css; charset=utf-8");
         assert_eq!(mime_for(Path::new("logo.svg")), "image/svg+xml");
         assert_eq!(mime_for(Path::new("mod.wasm")), "application/wasm");
-        assert_eq!(
-            mime_for(Path::new("weird.zzz")),
-            "application/octet-stream"
-        );
+        assert_eq!(mime_for(Path::new("weird.zzz")), "application/octet-stream");
     }
 
     #[test]
@@ -1029,10 +1061,7 @@ mod tests {
         std::fs::write(d.join("project.godot"), "[application]").unwrap();
 
         assert_eq!(detect_as(&d, Kind::Web), Target::Web { root: d.clone() });
-        assert!(matches!(
-            detect_as(&d, Kind::Game),
-            Target::Game { .. }
-        ));
+        assert!(matches!(detect_as(&d, Kind::Game), Target::Game { .. }));
         // Auto sees no APK and no gradle markers, so the web build wins over
         // the Godot marker by the ordering rule.
         assert_eq!(detect_as(&d, Kind::Auto), Target::Web { root: d.clone() });
@@ -1114,9 +1143,15 @@ mod tests {
         let d = tmp("mtime");
         std::fs::write(d.join("a.txt"), "1").unwrap();
         let before = SystemTime::now() - Duration::from_secs(60);
-        assert!(changed_since(&d, before), "a file newer than the mark counts");
+        assert!(
+            changed_since(&d, before),
+            "a file newer than the mark counts"
+        );
         let after = SystemTime::now() + Duration::from_secs(5);
-        assert!(!changed_since(&d, after), "nothing is newer than the future");
+        assert!(
+            !changed_since(&d, after),
+            "nothing is newer than the future"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -1128,7 +1163,10 @@ mod tests {
     /// A tiny blocking GET built on std only (the crate has no HTTP client).
     fn ureq_get(url: &str) -> String {
         let rest = url.trim_start_matches("http://");
-        let (hostport, path) = rest.split_once('/').map(|(h, p)| (h, format!("/{p}"))).unwrap();
+        let (hostport, path) = rest
+            .split_once('/')
+            .map(|(h, p)| (h, format!("/{p}")))
+            .unwrap();
         let mut stream = std::net::TcpStream::connect(hostport).expect("connect");
         let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
         let req = format!("GET {path} HTTP/1.1\r\nHost: {hostport}\r\nConnection: close\r\n\r\n");

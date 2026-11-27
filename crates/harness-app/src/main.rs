@@ -5,16 +5,18 @@
 
 mod commands;
 mod engine_bridge;
+mod layout;
 mod markdown;
 mod preview;
 mod theme;
-mod layout;
 mod ui;
 
 use std::collections::BTreeMap;
 use std::sync::{mpsc as std_mpsc, Arc};
 use std::time::Duration;
 
+use eframe::egui;
+use egui_commonmark::CommonMarkCache;
 use harness_core::agent::{self, Approval, LoopEvent, LoopInput};
 use harness_core::api::{ChatOptions, Message};
 use harness_core::attach::{self, Attachment};
@@ -22,8 +24,6 @@ use harness_core::config::{self, Config, EffortChoice, ModelChoice, Plugins};
 use harness_core::mcp::{self, McpConnection};
 use harness_core::session::{sessions_dir, Session, SessionHeader};
 use harness_core::tools::{self, RegisteredTool, ToolRegistry};
-use eframe::egui;
-use egui_commonmark::CommonMarkCache;
 use tokio::sync::Mutex;
 
 use ui::chat::LiveTurn;
@@ -48,13 +48,14 @@ pub(crate) enum View {
 }
 
 /// A finished online search delivered on a channel: (query, entries, warning).
-type OnlineResult = (String, Vec<harness_core::online::OnlineEntry>, Option<String>);
+type OnlineResult = (
+    String,
+    Vec<harness_core::online::OnlineEntry>,
+    Option<String>,
+);
 
 /// A provider's live model answer: (provider id, models or error).
-type ModelFetchResult = (
-    String,
-    Result<Vec<harness_core::models::ModelInfo>, String>,
-);
+type ModelFetchResult = (String, Result<Vec<harness_core::models::ModelInfo>, String>);
 
 pub(crate) struct App {
     pub(crate) rt: tokio::runtime::Runtime,
@@ -148,7 +149,8 @@ pub(crate) struct App {
     /// The agenttool.sh directory, downloaded once at startup.
     pub(crate) directory: Vec<harness_core::online::OnlineEntry>,
     /// Receives GitHub README analyses for paste-to-install.
-    pub(crate) analyze_rx: Option<std_mpsc::Receiver<Result<harness_core::online::DerivedPlugin, String>>>,
+    pub(crate) analyze_rx:
+        Option<std_mpsc::Receiver<Result<harness_core::online::DerivedPlugin, String>>>,
 
     /// Answers from slash commands, newest last, rendered under the transcript.
     pub(crate) notes: Vec<commands::CommandNote>,
@@ -201,9 +203,7 @@ impl App {
             .ok()
             .map(|id| id.trim().to_string())
             .filter(|id| !id.is_empty())
-            .and_then(|id| {
-                Session::load(&sessions_dir().join(format!("{id}.jsonl"))).ok()
-            });
+            .and_then(|id| Session::load(&sessions_dir().join(format!("{id}.jsonl"))).ok());
 
         let mut app = Self {
             rt: runtime,
@@ -432,7 +432,9 @@ impl App {
 
     /// Fold a completed boot pass into the live registry.
     fn absorb_mcp(&mut self) {
-        let Some(rx) = self.mcp_rx.as_ref() else { return };
+        let Some(rx) = self.mcp_rx.as_ref() else {
+            return;
+        };
         let Ok(boot) = rx.try_recv() else { return };
         self.mcp_rx = None;
 
@@ -515,7 +517,9 @@ impl App {
 
     /// Drain a GitHub README analysis; auto-add on success.
     fn pump_analyze(&mut self, ctx: &egui::Context) {
-        let Some(rx) = self.analyze_rx.as_ref() else { return };
+        let Some(rx) = self.analyze_rx.as_ref() else {
+            return;
+        };
         let Ok(result) = rx.try_recv() else { return };
         self.analyze_rx = None;
         match result {
@@ -591,7 +595,10 @@ impl App {
             .filter(|l| l.ends_with("connected"))
             .count();
         let mcp_all = self.mcp_status.len();
-        format!("{} tools · {mcp_up}/{mcp_all} MCP servers", self.registry.len())
+        format!(
+            "{} tools · {mcp_up}/{mcp_all} MCP servers",
+            self.registry.len()
+        )
     }
 
     // ---- model factory ----------------------------------------------------
@@ -610,7 +617,9 @@ impl App {
 
     fn maybe_fetch_selected_model_provider(&mut self) {
         let id = self.model_factory.selected_provider.clone();
-        let Some(spec) = harness_core::models::provider(&id) else { return };
+        let Some(spec) = harness_core::models::provider(&id) else {
+            return;
+        };
         if spec.live
             && harness_core::models::is_configured(spec)
             && !self.model_factory.live.contains_key(&id)
@@ -621,7 +630,9 @@ impl App {
     }
 
     fn start_model_fetch(&mut self, provider_id: &str) {
-        let Some(spec) = harness_core::models::provider(provider_id) else { return };
+        let Some(spec) = harness_core::models::provider(provider_id) else {
+            return;
+        };
         if !spec.live || self.model_factory.fetching.is_some() {
             return;
         }
@@ -638,8 +649,12 @@ impl App {
     }
 
     fn pump_model_fetch(&mut self, ctx: &egui::Context) {
-        let Some(rx) = self.model_fetch_rx.as_ref() else { return };
-        let Ok((id, result)) = rx.try_recv() else { return };
+        let Some(rx) = self.model_fetch_rx.as_ref() else {
+            return;
+        };
+        let Ok((id, result)) = rx.try_recv() else {
+            return;
+        };
         self.model_fetch_rx = None;
         self.model_factory.fetching = None;
         match result {
@@ -655,7 +670,11 @@ impl App {
         ctx.request_repaint();
     }
 
-    fn apply_model_factory(&mut self, action: ui::model_factory::ModelFactoryAction, ctx: &egui::Context) {
+    fn apply_model_factory(
+        &mut self,
+        action: ui::model_factory::ModelFactoryAction,
+        ctx: &egui::Context,
+    ) {
         match action {
             ui::model_factory::ModelFactoryAction::Select(model) => {
                 self.select_model(&model.id, &model.family);
@@ -748,7 +767,12 @@ impl App {
                 self.voice_status = ui::input::VoiceStatus::Idle;
                 match result {
                     Ok(text) => {
-                        if self.draft.chars().last().is_some_and(|c| !c.is_whitespace()) {
+                        if self
+                            .draft
+                            .chars()
+                            .last()
+                            .is_some_and(|c| !c.is_whitespace())
+                        {
                             self.draft.push(' ');
                         }
                         self.draft.push_str(&text);
@@ -786,11 +810,13 @@ impl App {
         self.voice_result_rx = Some(rx);
         self.rt.spawn(async move {
             let result = match harness_core::voice::synthesize(&http, &text, &voice).await {
-                Ok(clip) => tokio::task::spawn_blocking(move || harness_core::voice::play_clip(&clip))
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(|r| r.map_err(|e| e.to_string()))
-                    .map(|_| ()),
+                Ok(clip) => {
+                    tokio::task::spawn_blocking(move || harness_core::voice::play_clip(&clip))
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r.map_err(|e| e.to_string()))
+                        .map(|_| ())
+                }
                 Err(e) => Err(e.to_string()),
             };
             let _ = tx.send(result);
@@ -822,7 +848,10 @@ impl App {
             self.api_key.clone()
         };
         let Some(key) = resolved_key else {
-            self.error = Some("add an API key for your selected model in Settings (or set AURA_HOME / env vars)".into());
+            self.error = Some(
+                "add an API key for your selected model in Settings (or set AURA_HOME / env vars)"
+                    .into(),
+            );
             self.view = View::Settings;
             return;
         };
@@ -853,7 +882,9 @@ impl App {
         } else {
             title_from(&self.draft)
         };
-        let session = self.session.get_or_insert_with(|| Session::new(title.clone()));
+        let session = self
+            .session
+            .get_or_insert_with(|| Session::new(title.clone()));
         // A chat created with "+ New chat" starts as "New chat"; give it a
         // real title from the first prompt instead of leaving every session
         // indistinguishable in the sidebar.
@@ -1318,7 +1349,6 @@ impl App {
     }
 }
 
-
 /// The crew's shared plumbing, cloned once per agent turn.
 #[derive(Clone)]
 struct Crew {
@@ -1534,14 +1564,18 @@ pub(crate) fn partial_assistant_message(live: &LiveTurn) -> Option<Message> {
 
 /// Give legacy chats a real title from their first user message.
 fn repair_untitled_sessions() {
-    let Ok(headers) = Session::list_all() else { return };
+    let Ok(headers) = Session::list_all() else {
+        return;
+    };
     for header in headers {
         let title = header.title.trim();
         if !title.is_empty() && title != "New chat" {
             continue;
         }
         let path = sessions_dir().join(format!("{}.jsonl", header.id));
-        let Ok(mut session) = Session::load(&path) else { continue };
+        let Ok(mut session) = Session::load(&path) else {
+            continue;
+        };
         let Some(first) = session
             .messages
             .iter()
@@ -1633,7 +1667,10 @@ fn load_img_texture(ctx: &egui::Context, path: &str) -> Result<egui::TextureHand
     let resolved = resolve_path(path);
     let path = &resolved;
     // egui asserts (debug) / the GPU rejects textures past the device limit.
-    let max_edge = ctx.input(|i| i.max_texture_side).min(BG_MAX_EDGE as usize).max(64) as u32;
+    let max_edge = ctx
+        .input(|i| i.max_texture_side)
+        .min(BG_MAX_EDGE as usize)
+        .max(64) as u32;
     let img = image::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let (w, h) = (img.width(), img.height());
     let pixels = w as u64 * h as u64;
@@ -1651,7 +1688,8 @@ fn load_img_texture(ctx: &egui::Context, path: &str) -> Result<egui::TextureHand
         let scale = (max_edge as f64 / w.max(h) as f64).min(1.0);
         let nw = ((w as f64 * scale) as u32).max(1);
         let nh = ((h as f64 * scale) as u32).max(1);
-        img.resize(nw, nh, image::imageops::FilterType::Triangle).to_rgba8()
+        img.resize(nw, nh, image::imageops::FilterType::Triangle)
+            .to_rgba8()
     } else {
         img.to_rgba8()
     };
@@ -1661,7 +1699,14 @@ fn load_img_texture(ctx: &egui::Context, path: &str) -> Result<egui::TextureHand
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         ctx.load_texture("aura-bg", color, egui::TextureOptions::LINEAR)
     }))
-    .map_err(|_| format!("{}: GPU refused a {}x{} texture", path.display(), size[0], size[1]))
+    .map_err(|_| {
+        format!(
+            "{}: GPU refused a {}x{} texture",
+            path.display(),
+            size[0],
+            size[1]
+        )
+    })
 }
 
 fn window_icon() -> egui::IconData {
@@ -1729,9 +1774,18 @@ mod tests {
             route_manual_model_id("openrouter", "openrouter/anthropic/claude-3.5-sonnet"),
             "openrouter/anthropic/claude-3.5-sonnet"
         );
-        assert_eq!(route_manual_model_id("opencode", "go-anthropic/claude-opus-5"), "go-anthropic/claude-opus-5");
-        assert_eq!(route_manual_model_id("fpt", "DeepSeek-V4-Flash"), "fpt/DeepSeek-V4-Flash");
-        assert_eq!(route_manual_model_id("deepseek", "deepseek-flash"), "deepseek-flash");
+        assert_eq!(
+            route_manual_model_id("opencode", "go-anthropic/claude-opus-5"),
+            "go-anthropic/claude-opus-5"
+        );
+        assert_eq!(
+            route_manual_model_id("fpt", "DeepSeek-V4-Flash"),
+            "fpt/DeepSeek-V4-Flash"
+        );
+        assert_eq!(
+            route_manual_model_id("deepseek", "deepseek-flash"),
+            "deepseek-flash"
+        );
     }
 
     #[test]
@@ -1813,7 +1867,10 @@ mod tests {
         let ctx = egui::Context::default();
         let tex = load_img_texture(&ctx, big.to_str().unwrap()).expect("big png loads");
         let [w, h] = tex.size();
-        assert!(w as u32 <= BG_MAX_EDGE && h as u32 <= BG_MAX_EDGE, "{w}x{h}");
+        assert!(
+            w as u32 <= BG_MAX_EDGE && h as u32 <= BG_MAX_EDGE,
+            "{w}x{h}"
+        );
         assert_eq!([w, h], tex.size(), "texture matches the requested size");
 
         // Absurd input is refused, not fatal.

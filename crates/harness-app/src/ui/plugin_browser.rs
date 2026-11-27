@@ -8,10 +8,10 @@
 
 use crate::theme;
 use crate::ui::settings::AvailableServer;
+use egui::{RichText, Ui};
 use harness_core::catalog;
 use harness_core::config;
 use harness_core::online::{self, OnlineEntry, Source};
-use egui::{RichText, Ui};
 
 /// What the user asked the browser to do this frame.
 #[derive(Debug, Clone)]
@@ -64,15 +64,15 @@ pub fn show(ui: &mut Ui, state: &mut BrowserState<'_>) -> Option<BrowserAction> 
     let machine: Vec<&AvailableServer> = state
         .available
         .iter()
-        .filter(|s| {
-            q.is_empty()
-                || s.name.contains(&q)
-                || s.summary().to_lowercase().contains(&q)
-        })
+        .filter(|s| q.is_empty() || s.name.contains(&q) || s.summary().to_lowercase().contains(&q))
         .collect();
     let machine_empty = machine.is_empty();
     if !machine.is_empty() {
-        ui.label(RichText::new("On this machine").color(theme::text()).strong());
+        ui.label(
+            RichText::new("On this machine")
+                .color(theme::text())
+                .strong(),
+        );
         for server in machine {
             if add_row(ui, &server.name, &server.summary()) {
                 action = Some(BrowserAction::Add {

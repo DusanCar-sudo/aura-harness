@@ -204,6 +204,57 @@ fn standings_path() -> std::path::PathBuf {
     harness_core::config::config_dir().join("members.json")
 }
 
+/// Today's date in UTC, civil calendar.
+fn utc_date() -> (i64, u32, u32) {
+    let days = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        / 86400) as i64;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if m <= 2 { y + 1 } else { y }, m as u32, d as u32)
+}
+
+/// `YYYYMMDD-HHMMSS` in UTC, for report file names.
+fn stamp_utc_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let clock = secs % 86400;
+    let (y, m, d) = utc_date();
+    format!(
+        "{y:04}{m:02}{d:02}-{:02}{:02}{:02}",
+        clock / 3600,
+        (clock / 60) % 60,
+        clock % 60
+    )
+}
+
+/// `YYYY-MM-DD HH:MM:SS` in UTC, for report headings.
+fn phase_utc_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let clock = secs % 86400;
+    let (y, m, d) = utc_date();
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}",
+        clock / 3600,
+        (clock / 60) % 60,
+        clock % 60
+    )
+}
+
 /// The record on disk, or an empty one. A scratch panel should not fail loudly
 /// over its score file, so unreadable or malformed JSON reads as "no history".
 pub fn load_standings() -> Standings {
@@ -385,11 +436,7 @@ fn score_line(line: &str) -> Option<(String, i8, String)> {
     // The orchestrator's output is untrusted: clamp it, or one wild number skews
     // this role's standing forever.
     let score: i8 = number.trim().parse().ok()?;
-    Some((
-        role.to_string(),
-        score.clamp(SCORE_MIN, SCORE_MAX),
-        reason,
-    ))
+    Some((role.to_string(), score.clamp(SCORE_MIN, SCORE_MAX), reason))
 }
 
 /// The crew and its live state.
@@ -401,6 +448,8 @@ pub struct Swarm {
     pub standing: Standings,
     /// The crew's one event pipe; `None` while nothing is running.
     rx: Option<Receiver<CrewEvent>>,
+    /// Where the last saved run report went, or why saving failed.
+    pub last_report: Option<String>,
 }
 
 impl Default for Swarm {
@@ -418,7 +467,70 @@ impl Swarm {
             phase: Phase::Idle,
             standing: load_standings(),
             rx: None,
+            last_report: None,
         }
+    }
+
+    /// The markdown text of a run report: task, per-member jobs, tool calls,
+    /// the orchestrator's scores with reasons, and the resulting standings.
+    fn report_text(&self, task: &str) -> String {
+        let mut report = format!(
+            "# Crew run — {}\n\n**Task**\n\n{}\n\n",
+            phase_utc_now(),
+            task.trim()
+        );
+        for member in &self.members {
+            report.push_str(&format!("## {}\n\n", member.name));
+            report.push_str(&format!("- Status: {}\n", member.status.label()));
+            if !member.assignment.is_empty() {
+                report.push_str(&format!("- Job: {}\n", member.assignment));
+            }
+            report.push_str(&format!("- Tool calls: {}\n", member.tools));
+            if let Some(score) = member.score {
+                if member.reason.is_empty() {
+                    report.push_str(&format!("- Score: {score:+}\n"));
+                } else {
+                    report.push_str(&format!("- Score: {score:+} — {}\n", member.reason));
+                }
+            }
+            if let Some(standing) = self.standing.get(member.name) {
+                report.push_str(&format!(
+                    "- Standing: {:+} total, last {:+}\n",
+                    standing.total, standing.last
+                ));
+            }
+            if let Some(error) = &member.error {
+                report.push_str(&format!("- Error: {error}\n"));
+            }
+            report.push('\n');
+            let answer = member.answer.trim();
+            if !answer.is_empty() {
+                report.push_str(answer);
+                report.push_str("\n\n");
+            }
+        }
+        report
+    }
+
+    /// Write the run report next to the standings and remember where it went.
+    pub fn export_report(&mut self, task: &str) {
+        if self.scored() == 0 {
+            self.last_report = Some("nothing scored yet — wait for the orchestrator".to_owned());
+            return;
+        }
+        let dir = harness_core::config::config_dir().join("reports");
+        let saved = std::fs::create_dir_all(&dir)
+            .map_err(|error| error.to_string())
+            .and_then(|()| {
+                let path = dir.join(format!("swarm-{}.md", stamp_utc_now()));
+                std::fs::write(&path, self.report_text(task))
+                    .map(|()| path.display().to_string())
+                    .map_err(|error| error.to_string())
+            });
+        self.last_report = Some(match saved {
+            Ok(path) => path,
+            Err(error) => format!("report failed: {error}"),
+        });
     }
 
     /// True while the orchestration is live.
@@ -574,14 +686,18 @@ pub enum SwarmAction {
 }
 
 /// Draw the crew. `task` is what Run would fan out; the panel never edits it.
-pub fn show(ui: &mut Ui, swarm: &Swarm, task: &mut String) -> Option<SwarmAction> {
+pub fn show(ui: &mut Ui, swarm: &mut Swarm, task: &mut String) -> Option<SwarmAction> {
     let mut action = None;
     let busy = swarm.busy();
 
     // The task lives here, not in the chat composer: the crew is scratch work
     // and must not compete with an open conversation for the draft.
     ui.add_space(2.0);
-    text_edit(ui, task, TextEditSpec::multiline().rows(3).hint("Task for the crew…"));
+    text_edit(
+        ui,
+        task,
+        TextEditSpec::multiline().rows(3).hint("Task for the crew…"),
+    );
 
     ui.horizontal(|ui| {
         ui.label(RichText::new(swarm.headline()).color(theme::dim()).small());
@@ -609,9 +725,31 @@ pub fn show(ui: &mut Ui, swarm: &Swarm, task: &mut String) -> Option<SwarmAction
                 {
                     action = Some(SwarmAction::Run);
                 }
+                if ui
+                    .small_button("Save report")
+                    .on_hover_text(
+                        "Write this run — task, jobs, scores, standings — to a markdown report",
+                    )
+                    .clicked()
+                {
+                    swarm.export_report(task);
+                }
             }
         });
     });
+    if let Some(report) = &swarm.last_report {
+        ui.horizontal(|ui| {
+            let saved = !report.contains("failed") && !report.contains("nothing scored");
+            ui.label(
+                RichText::new(report)
+                    .color(if saved { theme::dim() } else { theme::danger() })
+                    .small(),
+            );
+            if saved && ui.small_button("Copy path").clicked() {
+                ui.ctx().copy_text(report.clone());
+            }
+        });
+    }
     ui.separator();
 
     egui::ScrollArea::vertical()
@@ -627,62 +765,65 @@ pub fn show(ui: &mut Ui, swarm: &Swarm, task: &mut String) -> Option<SwarmAction
                 }
                 // None iff collapsed, so `!open` is when the row needs its own
                 // one-line progress readout.
-                let open = egui::CollapsingHeader::new(
-                    RichText::new(head).color(member.status.color()),
-                )
-                .default_open(false)
-                .show(ui, |ui| {
-                    if let Some(error) = &member.error {
-                        ui.label(RichText::new(error).color(theme::danger()).small());
-                    }
-                    if !member.assignment.is_empty() {
-                        ui.label(
-                            RichText::new(format!("Tasked: {}", member.assignment))
-                                .color(theme::dim())
-                                .small(),
-                        );
-                    }
-                    if member.answer.trim().is_empty() {
-                        ui.label(
-                            RichText::new(if member.running() {
-                                "Working…"
+                let open =
+                    egui::CollapsingHeader::new(RichText::new(head).color(member.status.color()))
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            if let Some(error) = &member.error {
+                                ui.label(RichText::new(error).color(theme::danger()).small());
+                            }
+                            if !member.assignment.is_empty() {
+                                ui.label(
+                                    RichText::new(format!("Tasked: {}", member.assignment))
+                                        .color(theme::dim())
+                                        .small(),
+                                );
+                            }
+                            if member.answer.trim().is_empty() {
+                                ui.label(
+                                    RichText::new(if member.running() {
+                                        "Working…"
+                                    } else {
+                                        "No answer yet."
+                                    })
+                                    .color(theme::dim())
+                                    .small(),
+                                );
                             } else {
-                                "No answer yet."
-                            })
-                            .color(theme::dim())
-                            .small(),
-                        );
-                    } else {
-                        ui.label(&member.answer);
-                    }
-                    if let Some(score) = member.score {
-                        let line = if member.reason.is_empty() {
-                            format!("Orchestrator scored {score:+}")
-                        } else {
-                            format!("Orchestrator scored {score:+}: {}", member.reason)
-                        };
-                        let color = if score < 0 { theme::danger() } else { theme::ok() };
-                        ui.label(RichText::new(line).color(color).small());
-                    }
-                    if let Some(standing) = swarm.standing.get(member.name) {
-                        ui.label(
-                            RichText::new(format!(
-                                "Standing {:+} · last {:+}",
-                                standing.total, standing.last
-                            ))
-                            .color(theme::dim())
-                            .small(),
-                        );
-                    }
-                    if !member.answer.is_empty() {
-                        ui.add_space(2.0);
-                        if ui.small_button("Copy answer").clicked() {
-                            ui.ctx().copy_text(member.answer.clone());
-                        }
-                    }
-                })
-                .body_returned
-                .is_some();
+                                ui.label(&member.answer);
+                            }
+                            if let Some(score) = member.score {
+                                let line = if member.reason.is_empty() {
+                                    format!("Orchestrator scored {score:+}")
+                                } else {
+                                    format!("Orchestrator scored {score:+}: {}", member.reason)
+                                };
+                                let color = if score < 0 {
+                                    theme::danger()
+                                } else {
+                                    theme::ok()
+                                };
+                                ui.label(RichText::new(line).color(color).small());
+                            }
+                            if let Some(standing) = swarm.standing.get(member.name) {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Standing {:+} · last {:+}",
+                                        standing.total, standing.last
+                                    ))
+                                    .color(theme::dim())
+                                    .small(),
+                                );
+                            }
+                            if !member.answer.is_empty() {
+                                ui.add_space(2.0);
+                                if ui.small_button("Copy answer").clicked() {
+                                    ui.ctx().copy_text(member.answer.clone());
+                                }
+                            }
+                        })
+                        .body_returned
+                        .is_some();
                 if !open && member.running() && !member.last_tool.is_empty() {
                     ui.label(
                         RichText::new(format!("   {}", member.last_tool))
@@ -736,12 +877,16 @@ mod tests {
         tx.try_send(CrewEvent::Phase(Phase::Reviewing)).unwrap();
         tx.try_send(CrewEvent::Member(0, LoopEvent::Content("Ship it.".into())))
             .unwrap();
-        tx.try_send(CrewEvent::Score(1, 2, "on task".into())).unwrap();
+        tx.try_send(CrewEvent::Score(1, 2, "on task".into()))
+            .unwrap();
         tx.try_send(CrewEvent::Phase(Phase::Done)).unwrap();
 
         assert!(swarm.drain(), "live until the pipe closes");
         let (lead, analyst) = (&swarm.members[0], &swarm.members[1]);
-        assert_eq!(lead.answer, "Ship it.", "the plan is replaced by the verdict");
+        assert_eq!(
+            lead.answer, "Ship it.",
+            "the plan is replaced by the verdict"
+        );
         assert_eq!(analyst.assignment, "check X");
         assert_eq!(analyst.answer, "found Y");
         assert_eq!(analyst.tools, 1);
@@ -759,8 +904,11 @@ mod tests {
         let (tx, mut swarm) = crew();
         tx.try_send(CrewEvent::Assign(2, "look for holes".into()))
             .unwrap();
-        tx.try_send(CrewEvent::Member(2, LoopEvent::Failed("429 rate limited".into())))
-            .unwrap();
+        tx.try_send(CrewEvent::Member(
+            2,
+            LoopEvent::Failed("429 rate limited".into()),
+        ))
+        .unwrap();
         swarm.drain();
         assert_eq!(swarm.members[2].status, MemberStatus::Error);
         assert_eq!(swarm.members[2].error.as_deref(), Some("429 rate limited"));
@@ -799,8 +947,14 @@ mod tests {
                     1. risk-analyst: what breaks if X is down\n\
                     critic-analyst | do we need X at all\n";
         let jobs = parse_plan(plan);
-        assert_eq!(jobs.get("research-analyst").map(String::as_str), Some("read the docs for X"));
-        assert_eq!(jobs.get("risk-analyst").map(String::as_str), Some("what breaks if X is down"));
+        assert_eq!(
+            jobs.get("research-analyst").map(String::as_str),
+            Some("read the docs for X")
+        );
+        assert_eq!(
+            jobs.get("risk-analyst").map(String::as_str),
+            Some("what breaks if X is down")
+        );
         // No colon means no job: the analyst falls back to a generic one rather
         // than getting half a sentence.
         assert!(!jobs.contains_key("critic-analyst"));
@@ -824,9 +978,17 @@ mod tests {
         assert_eq!(
             scores,
             vec![
-                ("research-analyst".to_string(), 2, "exactly on assignment".to_string()),
+                (
+                    "research-analyst".to_string(),
+                    2,
+                    "exactly on assignment".to_string()
+                ),
                 ("risk-analyst".to_string(), 0, String::new()),
-                ("critic-analyst".to_string(), SCORE_MIN, "ignored the job".to_string()),
+                (
+                    "critic-analyst".to_string(),
+                    SCORE_MIN,
+                    "ignored the job".to_string()
+                ),
             ],
             "an out-of-range score is clamped, not trusted"
         );
@@ -838,17 +1000,27 @@ mod tests {
         let mut standings = Standings::new();
         fold(
             &mut standings,
-            &[("risk-analyst".to_string(), -2, "went off and rewrote the plan".to_string())],
+            &[(
+                "risk-analyst".to_string(),
+                -2,
+                "went off and rewrote the plan".to_string(),
+            )],
         );
         assert!(standing_note(standings.get("risk-analyst")).contains("You strayed"));
         assert!(standing_note(standings.get("risk-analyst")).contains("-2"));
 
         // A second run that went well pulls the total back up and changes the note.
-        fold(&mut standings, &[("risk-analyst".to_string(), 2, "held the job".to_string())]);
+        fold(
+            &mut standings,
+            &[("risk-analyst".to_string(), 2, "held the job".to_string())],
+        );
         assert_eq!(standings["risk-analyst"].total, 0);
         assert_eq!(standing_note(standings.get("risk-analyst")), "");
 
-        fold(&mut standings, &[("risk-analyst".to_string(), 1, "held the job".to_string())]);
+        fold(
+            &mut standings,
+            &[("risk-analyst".to_string(), 1, "held the job".to_string())],
+        );
         assert!(standing_note(standings.get("risk-analyst")).contains("+1"));
         // A role with no history gets nothing.
         assert_eq!(standing_note(standings.get("lead")), "");
@@ -875,24 +1047,57 @@ mod tests {
             .members
             .iter()
             .all(|m| m.answer.is_empty() && m.assignment.is_empty() && m.score.is_none()));
-        assert!(swarm
-            .members
-            .iter()
-            .all(|m| m.status == MemberStatus::Idle));
+        assert!(swarm.members.iter().all(|m| m.status == MemberStatus::Idle));
     }
 
     #[test]
     fn an_analyst_prompt_carries_its_brief_and_its_record() {
         let mut standings = Standings::new();
-        fold(&mut standings, &[("critic-analyst".to_string(), -1, "attacked the user".into())]);
+        fold(
+            &mut standings,
+            &[("critic-analyst".to_string(), -1, "attacked the user".into())],
+        );
         let prompt = analyst_prompt("BASE", "critic-analyst", &standings);
         assert!(prompt.starts_with("BASE"));
         assert!(prompt.contains("You are a critic"));
         assert!(prompt.contains("You strayed"));
         // A clean record adds no note.
         assert!(!analyst_prompt("BASE", "risk-analyst", &standings).contains("You strayed"));
-        // The orchestrator's own turns name the analysts they are scoring.
+        // The orchestrator's own turns name the analysts they are scored.
         assert!(review_prompt("").contains("research-analyst: <score>"));
         assert!(plan_prompt("").contains("risk-analyst: "));
+    }
+
+    #[test]
+    fn a_run_report_carries_the_task_scores_and_standings() {
+        let mut swarm = Swarm::new();
+        swarm.export_report("nothing scored");
+        assert!(
+            swarm
+                .last_report
+                .as_deref()
+                .unwrap()
+                .contains("nothing scored yet"),
+            "{:?}",
+            swarm.last_report
+        );
+        let mut scored = Swarm::new();
+        scored.members[0].answer = "the plan".to_owned();
+        scored.members[1].assignment = "check the edge cases".to_owned();
+        scored.members[1].tools = 4;
+        scored.members[1].score = Some(2);
+        scored.members[1].reason = "kept to its job".to_owned();
+        fold(
+            &mut scored.standing,
+            &[("research-analyst".to_owned(), 2, "kept to its job".to_owned())],
+        );
+        let text = scored.report_text("audit the module");
+        assert!(text.starts_with("# Crew run — 2"), "{text}");
+        assert!(text.contains("**Task**\n\naudit the module"), "{text}");
+        assert!(text.contains("- Job: check the edge cases"), "{text}");
+        assert!(text.contains("- Tool calls: 4"), "{text}");
+        assert!(text.contains("- Score: +2 — kept to its job"), "{text}");
+        assert!(text.contains("- Standing: +2 total"), "{text}");
+        assert!(text.contains("the plan"), "{text}");
     }
 }

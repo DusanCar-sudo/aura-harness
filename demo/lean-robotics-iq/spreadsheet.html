@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spreadsheet &amp; data modeling sample | Lean Robotics IQ</title>
+<meta name="description" content="A working sample workbook: a training-data QA and delivery tracker built in Excel — a typed data model, VLOOKUP on a named range, dropdown validation, conditional formatting, live COUNTIFS/SUMIFS summaries and formula-based data-quality checks.">
+<meta name="author" content="Dušan Milosavljević">
+<meta name="theme-color" content="#0D0F0E">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Lean Robotics IQ">
+<meta property="og:title" content="Spreadsheet &amp; data modeling sample.">
+<meta property="og:description" content="A training-data QA tracker built in Excel: typed data model, lookups, validation, live summaries and data-quality checks.">
+<link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/archivo-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/barlow-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/clash-display-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/fonts/fonts.css">
+<link rel="stylesheet" href="assets/css/site.css">
+<link rel="stylesheet" href="assets/css/harness-nature.css">
+</head>
+<body class="">
+<a class="skip" href="#main">Skip to content</a>
+<div class="scrollline" aria-hidden="true"><span></span></div>
+<header class="top" data-header>
+  <div class="shell top__inner">
+    <a class="brand" href="index.html" aria-label="Lean Robotics IQ — home">
+      <svg class="brand__mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        <rect width="32" height="32" fill="currentColor" opacity=".0"/>
+        <rect x="6" y="6" width="9" height="9" fill="currentColor"/>
+        <rect x="17" y="6" width="9" height="9" fill="currentColor"/>
+        <rect x="6" y="17" width="9" height="9" fill="currentColor"/>
+        <rect x="17" y="15" width="9" height="9" fill="var(--signal)"/>
+      </svg>
+      <span class="brand__type">Lean Robotics <em>IQ</em></span>
+    </a>
+    <nav class="top__nav" aria-label="Primary">
+      <a href="index.html#problem" data-nav="problem">Problem</a>
+      <a href="datasets.html" data-nav="work">The work</a>
+      <a href="method.html" data-nav="method">Method</a>
+      <a href="index.html#evidence" data-nav="evidence">Evidence</a>
+      <a href="spreadsheet.html" data-nav="sample" class="is-active" aria-current="page">Sample</a>
+    </nav>
+    <div class="top__actions">
+      <a class="btn btn--signal btn--sm" href="index.html#contact">Start a pilot <span aria-hidden="true">→</span></a>
+      <button class="top__burger" type="button" aria-expanded="false" aria-controls="mobile-nav" data-burger>
+        <span class="top__burger-label">Menu</span>
+        <span class="top__burger-box" aria-hidden="true"><i></i><i></i></span>
+      </button>
+    </div>
+  </div>
+</header>
+  <div class="mobilenav" id="mobile-nav" data-mobilenav hidden>
+    <nav class="shell mobilenav__inner" aria-label="Mobile">
+      <a href="index.html#problem">The English-only default</a>
+      <a href="datasets.html">The work</a>
+      <a href="method.html">Method</a>
+      <a href="index.html#evidence">Evidence — the audit</a>
+      <a href="spreadsheet.html">Spreadsheet sample</a>
+      <a class="mobilenav__cta" href="index.html#contact">Start a pilot →</a>
+      <p class="mobilenav__meta">Praktess Research · Aura Code Project<br>Da Nang, Vietnam · aura@leanproiq.com</p>
+    </nav>
+  </div>
+
+<main id="main">
+<section class="pagehead">
+  <div class="shell pagehead__inner">
+    <div class="pagehead__top">
+      <p class="pagehead__crumb"><a href="index.html">Lean Robotics IQ</a> / Spreadsheet sample</p>
+      <span class="tag tag--lime">Work sample · XLSX</span>
+    </div>
+    <p class="eyebrow">Spreadsheet skills &amp; data modeling</p>
+    <h1 class="display-xl pagehead__title">A tracker that <em>checks itself</em>.</h1>
+    <p class="pagehead__lede">A working Excel workbook, built the way we actually handle data: one typed base table, everything else derived live by formula — summaries, per-project breakdowns and data-quality checks that go to zero when the data is clean.</p>
+    <div class="hero__cta" style="margin-top:30px">
+      <a class="btn btn--signal" href="assets/docs/sample-training-data-tracker.xlsx" download>Download the workbook (XLSX) <span aria-hidden="true">↓</span></a>
+    </div>
+    <div class="pagehead__meta">
+      <span><b>FORMAT</b> Excel · 5 sheets · no macros</span>
+      <span><b>DATA</b> Illustrative sample rows</span>
+      <span><b>COMPATIBILITY</b> Excel, Google Sheets, LibreOffice</span>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="shell">
+    <div class="doc">
+      <aside class="doc__toc" aria-label="On this page">
+        <h3>On this page</h3>
+        <ol>
+          <li><a href="#data">DATA — the base table</a></li>
+          <li><a href="#summary">SUMMARY — live metrics</a></li>
+          <li><a href="#byproject">BY_PROJECT — breakdown</a></li>
+          <li><a href="#checks">CHECKS — quality rules</a></li>
+          <li><a href="#principles">Modeling principles</a></li>
+        </ol>
+      </aside>
+      <div class="doc__body">
+        <h2 id="data">DATA — the base table</h2>
+        <p>One row per recorded trace: <code>trace_id</code>, date, project, task type, units, status, QA score, reviewer, notes. Column types are fixed; two columns take dropdown validation (status: accepted / rejected / pending; task type), so free-typed variants can't fragment the counts later.</p>
+        <p>Project names are never re-typed: the table stores a <code>project_id</code> and resolves the display name with <code>VLOOKUP</code> against a named range (<code>ProjectTable</code>), so renaming a project is a one-cell edit in the lookup sheet. Conditional formatting flags QA scores below 0.75 in red and 0.95+ in green. The header row is frozen and filtered.</p>
+
+        <h2 id="summary">SUMMARY — live metrics</h2>
+        <p>Every number on this sheet is a formula over DATA — nothing is pasted, so nothing goes stale: totals and acceptance rate with <code>COUNTIF</code>, delivered volume with <code>SUMIF</code>, average QA with <code>AVERAGE</code>. The formula behind each metric is printed next to it, so the model explains itself.</p>
+
+        <h2 id="byproject">BY_PROJECT — breakdown</h2>
+        <p>One row per project with <code>COUNTIF</code>/<code>SUMIF</code>/<code>COUNTIFS</code>/<code>AVERAGEIF</code>: traces, units, acceptance rate and mean QA score. Adding a project is adding one row of formulas — the model scales without restructuring.</p>
+
+        <h2 id="checks">CHECKS — quality rules</h2>
+        <p>The sheet we care most about. Six data-quality rules, each a single live formula that counts violations: duplicate IDs (<code>SUMPRODUCT</code> over <code>COUNTIF</code>), blank required fields, QA scores outside 0–1, project IDs that miss the lookup table (<code>ISNA</code>/<code>MATCH</code>), and non-positive unit counts. Green means zero; conditional formatting turns any nonzero count red. A delivery passes when the whole column reads 0.</p>
+
+        <h2 id="principles">Modeling principles</h2>
+        <p>The workbook follows the same rules we apply to delivery data: one source of truth per fact (lookups, not copies), typed columns with validation at entry, derived values computed — never pasted, and quality expressed as checkable formulas rather than eyeballing. All numbers in the sample rows are illustrative.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section--paper-2">
+  <div class="shell" style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:24px">
+    <div>
+      <p class="eyebrow" style="margin-bottom:12px">Next</p>
+      <h2 class="display-m" style="max-width:22ch">See the same care applied to delivery.</h2>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <a class="btn btn--bone" href="datasets.html">The work — deliverables <span aria-hidden="true">→</span></a>
+      <a class="btn btn--ghost" href="index.html#contact">Start a pilot <span aria-hidden="true">→</span></a>
+    </div>
+  </div>
+</section>
+
+</main>
+<footer class="foot">
+  <div class="shell">
+    <div class="foot__top">
+      <div class="foot__brand">
+        <svg class="brand__mark brand__mark--lg" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+          <rect x="6" y="6" width="9" height="9" fill="currentColor"/>
+          <rect x="17" y="6" width="9" height="9" fill="currentColor"/>
+          <rect x="6" y="17" width="9" height="9" fill="currentColor"/>
+          <rect x="17" y="15" width="9" height="9" fill="var(--signal)"/>
+        </svg>
+        <p class="foot__statement">Robot data<br>should travel.</p>
+        <p class="foot__sub">Lean Robotics IQ is the robotics-dataset line of Lean Progress IQ — a Praktess Research / Aura Code Project. We localize the instruction and annotation layer of robot-learning data, and we publish how we verify it.</p>
+      </div>
+      <div class="foot__cols">
+        <div class="foot__col">
+          <h3>Site</h3>
+          <a href="index.html#problem">The English-only default</a>
+          <a href="datasets.html">The work — deliverables</a>
+          <a href="method.html">Method</a>
+          <a href="index.html#evidence">Evidence — the audit</a>
+          <a href="index.html#languages">Languages</a>
+          <a href="index.html#contact">Start a pilot</a>
+        </div>
+        <div class="foot__col">
+          <h3>Research</h3>
+          <a href="assets/docs/Milosavljevic_2025_Recursive-Learning-and-the-Archimedes-Principle.pdf" target="_blank" rel="noopener">The preprint (PDF)</a>
+          <a href="https://orcid.org/0009-0006-4706-0467" target="_blank" rel="noopener me">ORCID profile</a>
+          <a href="https://scholar.google.com/citations?user=Gbp13nYAAAAJ&amp;hl=en" target="_blank" rel="noopener">Google Scholar</a>
+          <a href="method.html#protocol">Pre-registered protocol</a>
+        </div>
+        <div class="foot__col">
+          <h3>Contact</h3>
+          <a href="mailto:aura@leanproiq.com?subject=Lean%20Robotics%20IQ%20%E2%80%94%20pilot%20slice">aura@leanproiq.com</a>
+          <span>Da Nang, Vietnam</span>
+          <span>EN → SR / HR / BS / VI</span>
+          <a href="privacy.html">Privacy</a>
+        </div>
+      </div>
+    </div>
+    <div class="foot__bottom">
+      <p>© 2026 Lean Robotics IQ · Praktess Research. Preprint research; no peer-reviewed claim is made on this site.</p>
+      <p class="foot__credit">Set in Archivo, Barlow, Clash Display and JetBrains Mono. Plates generated on-device by a 0.9 GB locomotion-free diffusion model (SDXS-512, DreamShaper distill) on a Radeon 680M — a small model that makes mistakes. We kept the mistakes; the verifier is for the data.</p>
+      <a class="foot__back" href="#main">Back to top <span aria-hidden="true">↑</span></a>
+    </div>
+  </div>
+</footer>
+<script src="assets/js/site.js" defer></script>
+</body>
+</html>

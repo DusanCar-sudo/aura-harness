@@ -148,7 +148,13 @@ impl FileTreeState {
             }
         });
 
-        self.show_dir(ui, self.current.clone(), 0, &self.filter.to_lowercase(), &mut clicked);
+        self.show_dir(
+            ui,
+            self.current.clone(),
+            0,
+            &self.filter.to_lowercase(),
+            &mut clicked,
+        );
         self.show_editors(ui);
 
         if let Some(err) = &self.error {
@@ -171,11 +177,16 @@ impl FileTreeState {
         let entries = list_dir(&dir, self.show_hidden);
 
         for (p, is_dir) in entries {
-            let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let name = p
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
             if !filter.is_empty() {
                 let haystack = p.to_string_lossy().to_lowercase();
                 if !haystack.contains(filter) {
-                    if is_dir { self.show_dir(ui, p, depth + 1, filter, clicked); }
+                    if is_dir {
+                        self.show_dir(ui, p, depth + 1, filter, clicked);
+                    }
                     continue;
                 }
             }
@@ -189,9 +200,17 @@ impl FileTreeState {
                     let expanded = self.expanded.contains(&p);
                     let icon = if expanded { "📂" } else { "📁" };
                     if ui.button(format!("{} {}", icon, name)).clicked() {
-                        if expanded { self.expanded.remove(&p); } else { self.expanded.insert(p.clone()); }
+                        if expanded {
+                            self.expanded.remove(&p);
+                        } else {
+                            self.expanded.insert(p.clone());
+                        }
                     }
-                    if ui.small_button("in").on_hover_text("Hop into folder").clicked() {
+                    if ui
+                        .small_button("in")
+                        .on_hover_text("Hop into folder")
+                        .clicked()
+                    {
                         self.current = p.clone();
                         self.expanded.clear();
                     }
@@ -258,11 +277,8 @@ impl FileTreeState {
             ui.horizontal(|ui| {
                 ui.small("Rename:");
                 let mut draft = name.clone();
-                let resp = crate::ui::text_edit(
-                    ui,
-                    &mut draft,
-                    crate::ui::TextEditSpec::singleline(),
-                );
+                let resp =
+                    crate::ui::text_edit(ui, &mut draft, crate::ui::TextEditSpec::singleline());
                 resp.request_focus();
                 if ui.small_button("save").clicked()
                     || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
@@ -280,11 +296,8 @@ impl FileTreeState {
             let mut draft = name.clone();
             ui.horizontal(|ui| {
                 ui.small(if is_dir { "New folder:" } else { "New file:" });
-                let resp = crate::ui::text_edit(
-                    ui,
-                    &mut draft,
-                    crate::ui::TextEditSpec::singleline(),
-                );
+                let resp =
+                    crate::ui::text_edit(ui, &mut draft, crate::ui::TextEditSpec::singleline());
                 resp.request_focus();
                 if ui.small_button("create").clicked()
                     || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
@@ -380,8 +393,13 @@ pub fn list_dir(dir: &Path, show_hidden: bool) -> Vec<(PathBuf, bool)> {
     if let Ok(it) = fs::read_dir(dir) {
         for e in it.flatten() {
             let p = e.path();
-            let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            if should_skip(&name, show_hidden) { continue; }
+            let name = p
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if should_skip(&name, show_hidden) {
+                continue;
+            }
             out.push((p.clone(), p.is_dir()));
         }
     }

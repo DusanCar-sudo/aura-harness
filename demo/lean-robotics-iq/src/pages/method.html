@@ -1,0 +1,462 @@
+---
+title: Method — Recursive learning and the Archimedes Principle | Lean Robotics IQ
+description: The research behind our decision layer, explained: the recursive-learning loop, the competence gate, the break-even inequality q > cS/cL, the verifier safety envelope, why gates fail at cold start, and the pre-registered protocol — with the robotics adaptation stated plainly.
+og_title: Recursive learning and the Archimedes Principle, without the mystique.
+og_description: A loop that remembers, a gate that refuses to guess, one inequality, and a verifier that sets the safety limit. The full method, with an interactive break-even bench.
+nav: method
+---
+<section class="pagehead">
+  <div class="shell pagehead__inner">
+    <div class="pagehead__top">
+      <p class="pagehead__crumb"><a href="index.html">Lean Robotics IQ</a> / Method</p>
+      <span class="tag tag--lime">Preprint · 10 Sep 2025</span>
+    </div>
+    <p class="eyebrow">The method · v1.0</p>
+    <h1 class="display-xl pagehead__title">Two mechanisms, <em>one inequality</em>, one verifier.</h1>
+    <p class="pagehead__lede">Recursive learning and the Archimedes Principle, as preprinted — with the assumptions, the proofs in plain language, the failure modes that are easy to miss, and an interactive bench for the arithmetic that decides whether a cheap tier is allowed to carry a line.</p>
+    <div class="hero__cta" style="margin-top:30px">
+      <a class="btn btn--signal" href="#bench">Open the break-even bench <span aria-hidden="true">↓</span></a>
+      <a class="btn btn--ghost" href="assets/docs/Milosavljevic_2025_Recursive-Learning-and-the-Archimedes-Principle.pdf" target="_blank" rel="noopener">Download the preprint <span aria-hidden="true">↗</span></a>
+    </div>
+    <div class="pagehead__meta">
+      <span><b>AUTHOR</b> Dušan Milosavljević</span>
+      <span><b>AFFILIATION</b> Praktess Research · Aura Code Project</span>
+      <span><b>STATUS</b> Preprint · not peer reviewed</span>
+      <span><b>PROTOCOL</b> Pre-registered · not yet executed</span>
+    </div>
+  </div>
+</section>
+
+<section class="section section--tight section--paper-2">
+  <div class="shell">
+    <figure class="plate plate--wide reveal">
+      <div class="plate__img"><img src="assets/img/art/loop.jpg" alt="A bone-and-ink duotone plate of a large gear and cog mechanism, printed like an archival technical illustration." width="1200" height="800" loading="lazy" decoding="async"></div>
+      <figcaption class="plate__fig"><span><b>PLATE 02</b> — THE LOOP FEEDS ITSELF</span><span>SDXS·512 / ON-DEVICE</span></figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="section">
+  <div class="shell">
+    <div class="doc">
+      <aside class="doc__toc" aria-label="On this page">
+        <h3>On this page</h3>
+        <ol>
+          <li><a href="#recursion">Recursive learning</a></li>
+          <li><a href="#gate">The Archimedes Principle</a></li>
+          <li><a href="#bench">The break-even bench</a></li>
+          <li><a href="#envelope">The verifier envelope</a></li>
+          <li><a href="#reachability">Why gates fail</a></li>
+          <li><a href="#limits">What it does not claim</a></li>
+          <li><a href="#protocol">The protocol</a></li>
+          <li><a href="#references">Sources</a></li>
+        </ol>
+      </aside>
+
+      <div class="doc__body">
+
+        <div class="callout" style="margin:0 0 8px">
+          <span class="callout__tag">Adaptation, stated plainly</span>
+          <p><b>The preprint studies autonomous coding agents.</b> It contains no robot data, no translation experiment and no localization evaluation. What we take from it is the decision layer — the loop, the gate, the cost inequality, the verifier bound — and we apply it to dataset work. That adaptation is ours to test, and the evidence for it is ours to produce. The paper's audit is not evidence about translation, and we do not present it as such.</p>
+        </div>
+
+        <!-- ============================================================ 01 -->
+        <section class="doc__section" id="recursion">
+          <div class="doc__label"><span>01</span> Recursive learning <span>§5 · the loop</span></div>
+          <h2 class="display-m">The output of a run changes the distribution of the next run.</h2>
+          <div class="prose">
+            <p>An agent that merely acts does not improve. An agent that improves has to close a loop in which its own behaviour becomes data, and that data becomes a change in future behaviour. The loop has four stages; the recursion lives in the fourth. The research was done on coding agents; the descriptions below are the paper's, with our data-work translation in parentheses.</p>
+          </div>
+
+          <div class="defn">
+            <p class="defn__name">R1 — Execute</p>
+            <p>A tier attempts the task and emits a <em>trajectory</em>. In our line, one string is attempted: a first-pass producer — model-assisted, human, or both — returns a target string together with its alignment decision, termbase version and confidence.</p>
+          </div>
+          <div class="defn">
+            <p class="defn__name">R2 — Capture</p>
+            <p>The trajectory is reduced to a typed <em>episode</em>: task, pattern, tier, outcome, usage and wall time in the paper; string id, language pair, artifact type, segment map, producer, verdict and cost in ours. A small, boring, queryable record.</p>
+          </div>
+          <div class="defn">
+            <p class="defn__name">R3 — Consolidate</p>
+            <p>Episodes are compressed twice. First by statistics — a per-pattern competence estimator that spends no model call, on the principle that a confidence should be a ratio, never a model's opinion about itself. Second by distillation: one dated prose digest of recurring failure modes, unresolved threads and a short forward brief.</p>
+          </div>
+          <div class="defn">
+            <p class="defn__name">R4 — Inject</p>
+            <p>The digest and the derived lessons are placed into the context of subsequent runs, where they condition the next trajectory. Injected memory participates in the next episode, which is consolidated into the memory injected thereafter. That is what makes the loop recursive rather than merely archival.</p>
+          </div>
+
+          <div class="formal">
+            <b>Definition 5.2 — recursion operator.</b><br>
+            Let <span class="math">D</span> be the distillation map and <span class="math">I</span> the injection map. The recursion operator is
+            <div class="math" style="margin-top:10px">R = I ∘ D, &nbsp;&nbsp; M<sub>n+1</sub> = R(M<sub>n</sub>)</div>
+            <span class="dim">One round is one application. A memory state is a pair (episode corpus, distilled text memory).</span>
+          </div>
+
+          <h3>Two pathologies, and their countermeasures</h3>
+          <div class="prose">
+            <p><strong>Drift.</strong> Injected summaries are themselves model output. A summary that states a conclusion more strongly than the episodes support becomes, next round, evidence for that conclusion. The countermeasure is provenance: every derived claim traces to episode identifiers, and the statistical branch is computed from raw episodes, never from previous summaries. Arithmetic cannot drift; prose can.</p>
+            <p><strong>Collapse.</strong> If the agent only ever sees its own conclusions, memory converges to a fixed point that no longer corresponds to the world. The same probe rate ε used by the gate keeps a channel open to unmediated evidence, and a failed verification invalidates the digest rather than being absorbed into it.</p>
+            <p>Neither countermeasure is a proof of safety. They remove the two cheapest ways for the loop to become confidently wrong.</p>
+          </div>
+
+          <h3>Fixed points are a proof about an assumption</h3>
+          <div class="prop">
+            <p class="prop__label">Proposition 6.13 · contraction of the consolidation loop</p>
+            <p class="prop__title">If distillation is λ-Lipschitz with λ &lt; 1 and injection is non-expansive, the loop is a contraction.</p>
+            <p class="prop__math">d(R<sup>n</sup>M<sub>0</sub>, M<sup>*</sup>) ≤ λ<sup>n</sup> d(M<sub>0</sub>, M<sup>*</sup>)</p>
+            <p>Then the loop has a unique fixed point and converges to it; with per-step noise bounded by σ, iterates enter a ball of radius σ/(1−λ). The proof is Banach's theorem. What the paper does <em>not</em> prove is that real distillation has the Lipschitz property — it names it as an assumption, and the conclusion inherits that assumption.</p>
+          </div>
+
+          <h3>The fourth layer changes the weights</h3>
+          <div class="prose">
+            <p>R1–R3 adjust the context in which a fixed model operates. A system that only does that will eventually saturate: no amount of well-chosen context teaches a small model a capability it lacks. The implementation therefore tracks accumulated small-tier failures and raises a fine-tune readiness signal once a threshold F<sub>min</sub> = 20 is crossed. The threshold is a heuristic, not a theorem: twenty failures spread over twenty unrelated patterns is not a training set, it is twenty anecdotes.</p>
+          </div>
+        </section>
+
+        <!-- ============================================================ 02 -->
+        <section class="doc__section" id="gate">
+          <div class="doc__label"><span>02</span> The Archimedes Principle <span>§4 · the gate</span></div>
+          <h2 class="display-m">A cheap tier may displace only as much as it has verifiably displaced.</h2>
+          <div class="prose">
+            <p>The name is taken from displacement. The cheap tier is allowed to displace as much expensive work as its demonstrated competence can support, and no more. Task difficulty plays the role of weight; demonstrated competence plays the role of displaced volume. No hydrodynamic quantity exists in the system: the analogy organises design intuition, and every operational statement is about the estimator, the gate, the verifier and the two costs — each independently measurable.</p>
+          </div>
+
+          <div class="formal">
+            <b>Definition 4.1 — alternation policy.</b> Let θ = (m<sub>0</sub>, τ, ε): a minimum observation count, a competence threshold, and a probe rate. For a task t with similarity neighbourhood N(t):
+            <div style="margin-top:12px;line-height:2">
+              <span class="dim">n(t) &lt; m<sub>0</sub></span> &nbsp;→&nbsp; <b>permit the cheap tier</b> (learning phase)<br>
+              <span class="dim">n(t) ≥ m<sub>0</sub> and ŝ(t) ≥ τ</span> &nbsp;→&nbsp; <b>permit</b><br>
+              <span class="dim">otherwise</span> &nbsp;→&nbsp; <b>probe with probability ε, else escalate</b>
+            </div>
+          </div>
+
+          <div class="defn">
+            <p class="defn__name">P1 — Asymmetry of cost</p>
+            <p>0 &lt; c<sub>S</sub> ≪ c<sub>L</sub>. Empirical and trivially true wherever a first pass is cheaper than a senior review. In the deployment studied, c<sub>L</sub> is metered remote inference and c<sub>S</sub> a local model.</p>
+          </div>
+          <div class="defn">
+            <p class="defn__name">P2 — Conditional competence</p>
+            <p>Small-tier success probability is a property of the task's neighbourhood, not of the task alone; it is estimable from accumulated episodes. This is the substantive assumption, and the one an audit can test.</p>
+          </div>
+          <div class="defn">
+            <p class="defn__name">P3 — Verification before commitment</p>
+            <p>No small-tier output reaches the user without an independent verifier's acceptance. An architectural invariant, maintained by tool restriction — and in our line, by never letting the producer review its own string.</p>
+          </div>
+          <div class="defn">
+            <p class="defn__name">P4 — Refusal of permanent exile</p>
+            <p>No neighbourhood is permanently barred from the cheap tier. The probe rate guarantees that evidence, not history, decides admission. A closed gate is not self-correcting: a competent pattern can be excluded forever by early bad luck.</p>
+          </div>
+
+          <h3>The inequality</h3>
+          <div class="prose">
+            <p>For a pattern with cheap-tier success probability p and a verifier with recall ρ and false-accept probability α, define the acceptance probability</p>
+          </div>
+          <div class="formal">
+            <div class="math">q = pρ + (1 − p)α</div>
+            <span class="dim">the probability that a cheap attempt is both correct and accepted.</span>
+            <div class="math" style="margin-top:14px">E[C<sub>gate</sub>] = c<sub>S</sub> + (1 − q) c<sub>L</sub></div>
+            <div class="math" style="margin-top:14px"><b>q &gt; c<sub>S</sub> / c<sub>L</sub></b> &nbsp; ⇔ &nbsp; the gate costs less than always-large</div>
+          </div>
+          <div class="prop">
+            <p class="prop__label">Proposition 4.3 · break-even</p>
+            <p class="prop__title">The gated policy dominates always-large in expected cost if and only if q &gt; c<sub>S</sub>/c<sub>L</sub>.</p>
+            <p>The proof is two lines of algebra: c<sub>S</sub> + (1−q)c<sub>L</sub> &lt; c<sub>L</sub> ⇔ c<sub>S</sub> &lt; qc<sub>L</sub>. The interpretation is the design: a cheap tier carries a task exactly when the fraction of the task it can verifiably carry exceeds its cost advantage. A model a hundred times cheaper than the large tier pays for itself whenever its verified acceptance rate exceeds one per cent.</p>
+          </div>
+          <div class="prose">
+            <p>Cost is only half the question. The quality half is the verifier's false-accept rate, and nothing else — developed below.</p>
+          </div>
+
+          <figure class="plate plate--wide" style="margin-top:30px">
+            <div class="plate__img"><img src="assets/img/art/gate.jpg" alt="An orange duotone technical plate: a glass vessel with a tall tube, gauges and measuring marks, on a signal-orange ground." width="1200" height="800" loading="lazy" decoding="async"></div>
+            <figcaption class="plate__fig"><span><b>PLATE 05</b> — DISPLACEMENT, FOR DESIGN INTUITION ONLY</span><span>SDXS·512 / ON-DEVICE</span></figcaption>
+          </figure>
+
+          <h3>What the name does not license</h3>
+          <div class="callout">
+            <span class="callout__tag">Anti-claims</span>
+            <p><b>A1.</b> It is not a claim about model physics. <b>A2.</b> It does not assert that small models suffice — if the measurable subset is empty, the gate stays shut. <b>A3.</b> It is not a compression claim about weights; recursion operates on episodes and text until fine-tuning is explicitly triggered. <b>A4.</b> It confers no quality guarantee by itself; any guarantee is inherited from the verifier.</p>
+          </div>
+        </section>
+
+        <!-- ============================================================ 03 -->
+        <section class="doc__section" id="bench">
+          <div class="doc__label"><span>03</span> The bench <span>interactive · arithmetic, not simulation</span></div>
+          <h2 class="display-m">The break-even bench.</h2>
+          <div class="prose">
+            <p>Two numbers decide whether a cheap tier is admissible: the verified acceptance rate q and the cost ratio c<sub>S</sub>/c<sub>L</sub>. Move them. Everything else in this bench is the paper's algebra.</p>
+          </div>
+
+          <div class="bench" data-bench style="margin-top:26px">
+            <div class="bench__head">
+              <h3>Gate cost vs. always-large</h3>
+              <span class="bench__tag">E[C<sub>gate</sub>] = c<sub>S</sub> + (1 − q) c<sub>L</sub></span>
+            </div>
+            <div class="bench__body">
+              <div class="bench__controls">
+                <div class="field">
+                  <div class="field__top">
+                    <label for="bench-q">Verified acceptance rate · q</label>
+                    <output id="bench-q-out" data-bench-q-out for="bench-q">94%</output>
+                  </div>
+                  <input type="range" id="bench-q" data-bench-q min="0" max="100" step="1" value="94" aria-describedby="bench-q-hint">
+                  <p class="field__hint" id="bench-q-hint">q is not model accuracy. It is the chance a cheap attempt is both correct and accepted: q = pρ + (1−p)α. A sharper verifier raises q without the model improving.</p>
+                </div>
+                <div class="field">
+                  <div class="field__top">
+                    <label for="bench-r">Cost ratio · c<sub>S</sub> / c<sub>L</sub></label>
+                    <output id="bench-r-out" data-bench-r-out for="bench-r">4%</output>
+                  </div>
+                  <input type="range" id="bench-r" data-bench-r min="0" max="30" step="0.5" value="4" aria-describedby="bench-r-hint">
+                  <p class="field__hint" id="bench-r-hint">What one cheap attempt costs as a fraction of one escalation. Our illustration: a first pass at roughly a twentieth of a senior review. Use your own numbers.</p>
+                </div>
+              </div>
+              <div class="bench__out">
+                <div class="bench__saving" data-bench-saving>90%</div>
+                <p class="mono" style="font-size:9px;letter-spacing:.1em;color:var(--muted-ink);margin-top:-6px" data-bench-saving-label>saved per task vs. always-large</p>
+                <div class="bars" aria-hidden="false">
+                  <div class="bar__row">
+                    <span class="bar__label">Always large</span>
+                    <div class="bar__track"><span class="bar__fill" data-bench-large style="width:100%"></span></div>
+                    <span class="bar__val" data-bench-large-val>100%</span>
+                  </div>
+                  <div class="bar__row">
+                    <span class="bar__label">Gated</span>
+                    <div class="bar__track"><span class="bar__fill bar__fill--gate" data-bench-gate style="width:10%"></span></div>
+                    <span class="bar__val" data-bench-gate-val>10%</span>
+                  </div>
+                </div>
+                <div class="bench__verdict" data-bench-verdict aria-live="polite"><b>Gate admissible.</b></div>
+                <div class="bench__formula">
+                  q &gt; c<sub>S</sub>/c<sub>L</sub>
+                  <span>Break-even. At equality the gate and always-large cost the same; below it, the gate is a subsidy for the expensive tier.</span>
+                </div>
+              </div>
+            </div>
+            <p class="bench__foot">The bench omits three things the paper treats separately: the fixed cost of verification itself, latency, and pattern sparsity (a gate that has too little evidence to open). It also assumes the verifier's behaviour is stationary. All three are reasons a real ledger can be worse than the bench; none of them are reasons to skip the inequality.</p>
+          </div>
+        </section>
+
+        <!-- ============================================================ 04 -->
+        <section class="doc__section" id="envelope">
+          <div class="doc__label"><span>04</span> The safety envelope <span>§6.2 · Proposition 6.11</span></div>
+          <h2 class="display-m">The gate is never safer than its verifier.</h2>
+          <div class="prose">
+            <p>Let the cheap tier be correct with probability p, the large tier with probability p<sub>L</sub> ≥ p, and the verifier have false-accept probability α. Then the probability that the system returns an incorrect answer satisfies</p>
+          </div>
+          <div class="formal">
+            <div class="math">P[error] ≤ (1 − p) α + (1 − p<sub>L</sub>)</div>
+            <span class="dim">A union bound over two branches: an accepted wrong cheap answer, or a failed escalation. With a perfect verifier (α = 0) the bound equals always-large.</span>
+          </div>
+          <div class="callout">
+            <span class="callout__tag">Prohibition</span>
+            <p><b>The theorem's real content is a prohibition.</b> The gate cannot be safer than its verifier, and any quality gain must come from the verifier acting as a filter. The dangerous configuration is self-verification: estimate α on the model that produced the answer, and a model that is confidently wrong is also confidently approved. The implementation therefore treats the verifier model as a distinct, non-droppable configuration field — inheriting the author model would silently convert verification into agreement.</p>
+          </div>
+
+          <div class="bench" data-envelope style="margin-top:26px">
+            <div class="bench__head">
+              <h3>Envelope calculator</h3>
+              <span class="bench__tag" data-env-bound>4.6%</span>
+            </div>
+            <div class="bench__controls" style="padding-top:22px">
+              <div class="envelope__row">
+                <div class="field">
+                  <div class="field__top">
+                    <label for="env-p">Cheap tier correct · p</label>
+                    <output id="env-p-out" data-env-p-out for="env-p">88%</output>
+                  </div>
+                  <input type="range" id="env-p" data-env-p min="0" max="100" step="1" value="88">
+                </div>
+                <div class="field">
+                  <div class="field__top">
+                    <label for="env-pl">Large tier correct · p<sub>L</sub></label>
+                    <output id="env-pl-out" data-env-pl-out for="env-pl">96%</output>
+                  </div>
+                  <input type="range" id="env-pl" data-env-pl min="0" max="100" step="1" value="96">
+                </div>
+                <div class="field">
+                  <div class="field__top">
+                    <label for="env-alpha">Verifier false-accept · α</label>
+                    <output id="env-alpha-out" data-env-alpha-out for="env-alpha">5%</output>
+                  </div>
+                  <input type="range" id="env-alpha" data-env-alpha min="0" max="30" step="0.5" value="5">
+                </div>
+              </div>
+              <div class="envelope__result">
+                <span class="envelope__big" aria-hidden="true" data-env-bound>4.6%</span>
+                <p class="envelope__txt" data-env-note aria-live="polite">The bound on system error.</p>
+              </div>
+            </div>
+            <p class="bench__foot">The bound is not a measurement. It says what has to be measured before any cost claim is accepted: the verifier's false-accept rate, on the population that matters, with an independent rater. The audit in the preprint did not establish it; the protocol in §8 makes it Hypothesis 8.3.</p>
+          </div>
+        </section>
+
+        <!-- ============================================================ 05 -->
+        <section class="doc__section" id="reachability">
+          <div class="doc__label"><span>05</span> Why gates fail <span>§6.2 · Propositions 6.14 and 6.16</span></div>
+          <h2 class="display-m">The warm-up cost is the least glamorous result and the most consequential.</h2>
+          <div class="prose">
+            <p>A competence gate is not free at the start; it is inert until patterns recur. If a pattern k arrives with probability π<sub>k</sub> and the gate can be evaluated only once n<sub>k</sub> ≥ m<sub>0</sub>, the expected number of arrivals before it becomes evaluable is m<sub>0</sub>/π<sub>k</sub>. For K approximately equiprobable patterns that is Θ(m<sub>0</sub>K) tasks before <em>any</em> pattern reaches the decision stage.</p>
+            <p>The audit in the preprint observed the worst case: m<sub>0</sub> = 3, K ≈ n = 143, and 0 of 143 tasks reached the decision stage. The maximum neighbourhood size ever attained was two. This is a prediction of the model, not a mystery.</p>
+            <p>The second failure is stranger. If the cheap tier is invoked but unavailable, and the episode is recorded with attempted = 0, then n<sub>k</sub> stays 0, the estimator is undefined, and the gate remains in its permissive branch forever. The decision becomes independent of the true competence p<sub>k</sub>: absence of a backend is recorded as absence of evidence, and no amount of subsequent data can move the system off it.</p>
+          </div>
+
+          <div class="tablewrap">
+            <table class="data" data-table>
+              <thead>
+                <tr><th>Defect observed</th><th>Repair</th><th>Where it lives in our line</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Pattern keys too sparse</td><td>Coarsen keys; pool by construction type, not raw sentence</td><td>Artifact × scene family × construction (e.g. colour–noun agreement, place-destination)</td></tr>
+                <tr><td>Unavailable attempt logged as non-attempt</td><td>Three-valued attempt record: attempted / unavailable / declined</td><td>Every episode carries a producer status field</td></tr>
+                <tr><td>Closed gate never re-tested</td><td>Probe rate ε with a blind re-review sample</td><td>Fixed percentage of declined lines re-reviewed blind each batch</td></tr>
+                <tr><td>Verifier is the producer</td><td>Distinct, non-droppable verifier field</td><td>Separate reviewer or tool; producer never sees the verdict first</td></tr>
+                <tr><td>Savings claimed before quality is measured</td><td>Measure α before accepting any cost claim</td><td>Verifier report shipped with every delivery</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout">
+            <span class="callout__tag">Domain difference</span>
+            <p><b>Our corpus is not open-ended code.</b> Robot instruction datasets are template-dense and closed-vocabulary: the same constructions recur across scenes, and a dataset pass produces hundreds of lines per pattern. That is exactly the recurring-pattern regime in which the gate is reachable — the opposite of the 143-unique-keys stream in the audit. The 2026 translation literature adds a second reason for coarse keys: phrasing diversity matters, since a Greek VLA study found seven phrasings per task roughly halved the penalty from translator overfitting. Pattern keys should be construction-level, not sentence-level.</p>
+          </div>
+        </section>
+
+        <!-- ============================================================ 06 -->
+        <section class="doc__section" id="limits">
+          <div class="doc__label"><span>06</span> Limits <span>the paper's anti-claims</span></div>
+          <h2 class="display-m">What the method does not claim.</h2>
+          <div class="prose">
+            <p>The preprint's §4.4 and §7.7 are unusually explicit, and they are part of the definition rather than a disclaimer at the end. We keep them on the company site because this site sells verification, and the epistemic bookkeeping should be visible.</p>
+          </div>
+          <ul style="list-style:none;display:flex;flex-direction:column;gap:14px;margin-top:20px">
+            <li class="callout" style="margin:0"><span class="callout__tag">Audit limit</span><p>It cannot establish that gating saves money, that a 1.5B local model reaches the threshold on recurring patterns, that the verifier is sound, or that consolidation is contractive. There is no arm in which the cheap tier ran.</p></li>
+            <li class="callout" style="margin:0;background:var(--bone);color:var(--ink);border-color:var(--rule)"><span class="callout__tag" style="color:var(--signal-deep)">Status</span><p style="color:var(--muted)"><b style="color:var(--ink)">Preprint, not peer reviewed.</b> The regression benchmark has not been peer reviewed; the pre-registered protocol has not been executed. Numbers on this site come from the deployment audit and from public dataset cards, and are labelled as such.</p></li>
+            <li class="callout" style="margin:0"><span class="callout__tag">Company claim</span><p><b>We have not claimed a cost saving.</b> The method gives us a decision rule and a way to instrument it. The protocol below is how a saving would be earned and reported — including if the result is another null.</p></li>
+          </ul>
+        </section>
+
+        <!-- ============================================================ 07 -->
+        <section class="doc__section" id="protocol">
+          <div class="doc__label"><span>07</span> The protocol <span>§8 · pre-registered, not executed</span></div>
+          <h2 class="display-m">The study that would settle it.</h2>
+          <div class="prose">
+            <p>The framework makes falsifiable predictions, and the audit did not test them. The preprint specifies the study in enough detail to be registered before data collection — because a paper arguing for evidence-gated decisions should not leave its own evidence to improvisation.</p>
+          </div>
+
+          <h3>Four arms</h3>
+          <div class="tablewrap">
+            <table class="data" data-table>
+              <thead><tr><th>Arm</th><th>Policy</th><th>What it isolates</th></tr></thead>
+              <tbody>
+                <tr><td>A</td><td>Always escalate</td><td>Baseline</td></tr>
+                <tr><td>B</td><td>Competence gate, ε = 0</td><td>The gate without exploration</td></tr>
+                <tr><td>C</td><td>Competence gate, ε = 0.05</td><td>The full system</td></tr>
+                <tr><td>D</td><td>Always attempt cheap; escalate on rejection</td><td>The floor, and the oracle competence</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="prose">
+            <p>Each arm runs the same task list twice in independently randomised order, on two populations: <strong>recurring</strong> tasks, deliberately repeated with variation, and <strong>open-ended</strong> tasks, the natural low-recurrence stream. The two-population design makes Prop. 6.14 testable: the framework predicts a benefit on the first and none on the second. On the open-ended population, a saving larger than 5% would indicate an artifact in the harness, not a working gate — a negative control fixed in advance.</p>
+          </div>
+
+          <h3>Hypotheses and decision rules</h3>
+          <div class="tablewrap">
+            <table class="data" data-table>
+              <thead><tr><th>No.</th><th>Hypothesis</th><th>Decision rule</th></tr></thead>
+              <tbody>
+                <tr><td>H1</td><td>Cost: C is at least 20% cheaper per completed task than A</td><td>Paired Wilcoxon signed-rank, one-sided, α = 0.05</td></tr>
+                <tr><td>H2</td><td>Quality non-inferiority: success in C no worse than A by more than 2 pp</td><td>Pre-fixed margin δ = 0.02, tested against A's rerun spread</td></tr>
+                <tr><td>H3</td><td>Verifier soundness: false-accept rate ≤ 0.02</td><td>Stratified sample of 200 accepted answers, two blind raters, κ reported</td></tr>
+                <tr><td>H4</td><td>Gate calibration: ≥ 90% agreement with the oracle from arm D</td><td>Brier score reported for the underlying estimate</td></tr>
+                <tr><td>H5</td><td>Probe recovers competence after an induced backend regression, faster than B</td><td>Measured in encounters, controlled fault injection</td></tr>
+                <tr><td>H6</td><td>Recursion is contractive: λ̂ &lt; 1</td><td>Semantic drift between consecutive memory states; memory-ablated comparison</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Power</h3>
+          <div class="formal">
+            <b>Per-pattern evidence.</b> To estimate p<sub>k</sub> within η = 0.10 at 95% confidence:
+            <div class="math" style="margin-top:8px">n<sub>k</sub> ≥ (1 / 2η²) ln(2/δ) ≈ 184 attempts</div>
+            <span class="dim">With K = 100 patterns and N tasks, average attempts per pattern is N/K: tight per-pattern evidence demands N ≈ 18,400 tasks. This is the strongest argument for coarser keys or hierarchical pooling.</span>
+            <br><br>
+            <b>Population claims.</b> With within-pair standard deviation σ<sub>d</sub> and non-inferiority margin δ = 0.02:
+            <div class="math" style="margin-top:8px">N ≥ (z<sub>0.95</sub> + z<sub>0.80</sub>)² σ<sub>d</sub>² / δ²</div>
+            <span class="dim">For σ<sub>d</sub> = 0.12 this gives N ≈ 282 paired task instances; the cost hypothesis on log-cost with σ<sub>d</sub> ≈ 0.4 gives N ≈ 64 per arm.</span>
+          </div>
+          <div class="prose">
+            <p>The protocol, task lists, arm assignments, seeds and analysis script are to be deposited and frozen before the first arm runs, with a timestamp, and any deviation reported as a deviation. Raw episode stores and cost ledgers are to be published machine-readable and indexed by episode id, so every number in a results table traces to a record.</p>
+          </div>
+        </section>
+
+        <!-- ============================================================ 08 -->
+        <section class="doc__section" id="references">
+          <div class="doc__label"><span>08</span> Sources <span>what the claims stand on</span></div>
+          <h2 class="display-m">References, with the receipts.</h2>
+          <div class="prose">
+            <p>The primary source is the preprint, which contains the formal definitions, proofs, audit tables and protocol. Dataset figures used on the homepage are read from the official dataset cards and papers below; a fuller claims dossier is maintained alongside this site.</p>
+          </div>
+
+          <h3>The preprint</h3>
+          <ul style="list-style:none;display:flex;flex-direction:column;gap:10px;margin:16px 0">
+            <li><a class="link-arrow" href="assets/docs/Milosavljevic_2025_Recursive-Learning-and-the-Archimedes-Principle.pdf" target="_blank" rel="noopener">Milosavljević, D. (2025). Recursive Learning and the Archimedes Principle — PDF <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://orcid.org/0009-0006-4706-0467" target="_blank" rel="noopener me">ORCID record · 0009-0006-4706-0467 <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://scholar.google.com/citations?user=Gbp13nYAAAAJ&amp;hl=en" target="_blank" rel="noopener">Google Scholar profile <span aria-hidden="true">↗</span></a></li>
+          </ul>
+
+          <h3>Robot datasets and language annotations</h3>
+          <ul style="list-style:none;display:flex;flex-direction:column;gap:10px;margin:16px 0">
+            <li><a class="link-arrow" href="https://robotics-transformer-x.github.io/" target="_blank" rel="noopener">Open X-Embodiment / RT-X — 60 datasets, 22 embodiments, 1M+ trajectories <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://droid-dataset.github.io/" target="_blank" rel="noopener">DROID — 76k trajectories, 564 scenes, 86 tasks <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://robotics-transformer1.github.io/" target="_blank" rel="noopener">RT-1 — 130k episodes, 700+ tasks <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://rail-berkeley.github.io/bridgedata/" target="_blank" rel="noopener">BridgeData V2 — 60k trajectories, 24 environments <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://aloha-2.github.io/" target="_blank" rel="noopener">ALOHA / ACT — low-cost bimanual manipulation data <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://libero-project.github.io/" target="_blank" rel="noopener">LIBERO — lifelong robot learning benchmark <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://huggingface.co/docs/lerobot/index" target="_blank" rel="noopener">LeRobot — dataset and policy format <span aria-hidden="true">↗</span></a></li>
+          </ul>
+
+          <h3>Format references</h3>
+          <ul style="list-style:none;display:flex;flex-direction:column;gap:10px;margin:16px 0">
+            <li><a class="link-arrow" href="https://www.tensorflow.org/datasets/rlds" target="_blank" rel="noopener">RLDS — Reinforcement Learning Datasets <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://github.com/google-deepmind/open_x_embodiment" target="_blank" rel="noopener">Open X-Embodiment dataset schema <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://huggingface.co/docs/lerobot/lerobot-dataset-v3" target="_blank" rel="noopener">LeRobot dataset format v3 <span aria-hidden="true">↗</span></a></li>
+          </ul>
+
+          <h3>Multilingual robot-instruction research — prior art</h3>
+          <div class="prose">
+            <p>We acknowledge prior art rather than claiming a first. The gap we work in is dataset-side localization with per-episode provenance, not translation as such.</p>
+          </div>
+          <ul style="list-style:none;display:flex;flex-direction:column;gap:10px;margin:16px 0">
+            <li><a class="link-arrow" href="https://aclanthology.org/2026.acl-long.2066/" target="_blank" rel="noopener">“When Does Language Matter?” — LIBERO translated into ten languages; success drops 30–50% (ACL 2026) <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://arxiv.org/abs/2606.15714" target="_blank" rel="noopener">“Beyond English: Uncovering the Multilingual Gap in VLA Models” (2026) <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://arxiv.org/abs/2609.07470" target="_blank" rel="noopener">“Measuring Language Transfer in Robot Policies: Adding Greek to a Cosmos3 VLA Policy” (2026) <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://arxiv.org/abs/2505.01862" target="_blank" rel="noopener">ReLI — cross-lingual language-to-action grounding for HRI (2025) <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://aclanthology.org/2020.emnlp-main.356/" target="_blank" rel="noopener">RxR — multilingual vision-and-language navigation data (EMNLP 2020) <span aria-hidden="true">↗</span></a></li>
+            <li><a class="link-arrow" href="https://huggingface.co/datasets/hamzabouajila/ar-pusht-image" target="_blank" rel="noopener">Arabic PushT — a community translation of a VLA dataset <span aria-hidden="true">↗</span></a></li>
+          </ul>
+
+          <h3>Source notes</h3>
+          <ul style="list-style:none;display:flex;flex-direction:column;gap:10px;margin:16px 0">
+            <li><a class="link-arrow" href="assets/docs/claims-dossier.md" target="_blank" rel="noopener">Claims dossier — confidence labels and source URLs for every number on this site <span aria-hidden="true">↗</span></a></li>
+          </ul>
+
+          <p class="mono" style="font-size:9px;letter-spacing:.1em;color:var(--muted);margin-top:26px">Last verified: 22 October 2026 · corrections: aura@leanproiq.com · We publish corrections rather than quietly editing claims. “Absence of evidence” claims are date-stamped and mean <em>not found</em>, never <em>does not exist</em>.</p>
+        </section>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section--ink section--tight">
+  <div class="shell" style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:24px">
+    <div>
+      <p class="eyebrow" style="margin-bottom:12px">Next</p>
+      <h2 class="display-m" style="max-width:22ch">Read the deliverable, or bring one.</h2>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <a class="btn btn--bone" href="datasets.html">The work — deliverables <span aria-hidden="true">→</span></a>
+      <a class="btn btn--ghost" href="index.html#contact">Start a pilot <span aria-hidden="true">→</span></a>
+    </div>
+  </div>
+</section>

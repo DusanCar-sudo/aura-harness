@@ -142,7 +142,9 @@ impl eframe::App for App {
                 // selection to the clipboard on its own once these are on.
                 s.interaction.selectable_labels = true;
                 s.interaction.multi_widget_text_select = true;
-                let a = |c: egui::Color32| egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), alpha);
+                let a = |c: egui::Color32| {
+                    egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), alpha)
+                };
                 s.visuals.panel_fill = a(p.panel);
                 // Popups stay opaque: the model factory and plugin browser
                 // must be readable over a bright wallpaper.
@@ -264,7 +266,7 @@ impl eframe::App for App {
                             });
                         }
                         RightTab::Members => {
-                            swarm_action = ui::members::show(ui, &self.swarm, &mut self.crew_task);
+                            swarm_action = ui::members::show(ui, &mut self.swarm, &mut self.crew_task);
                         }
                     }
                 });
@@ -312,7 +314,11 @@ impl eframe::App for App {
                         attachments: &self.attachments,
                         model: &mut self.model,
                         effort: &mut self.effort,
-                        selected_model: if self.config.model_id.trim().is_empty() { None } else { Some(self.config.model_id.trim().to_string()) },
+                        selected_model: if self.config.model_id.trim().is_empty() {
+                            None
+                        } else {
+                            Some(self.config.model_id.trim().to_string())
+                        },
                         busy: self.busy,
                         tool_count: self.registry.len(),
                         voice: self.voice_status,
@@ -389,9 +395,7 @@ impl eframe::App for App {
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.toggle_value(&mut self.right_panel, "Right panel")
-                        .on_hover_text(
-                            "Show or hide the Files / Preview / Plugins pane · Ctrl+B",
-                        );
+                        .on_hover_text("Show or hide the Files / Preview / Plugins pane · Ctrl+B");
                     ui.separator();
                     let waiting = self.cards.iter().any(|c| c.awaiting_approval());
                     if waiting {

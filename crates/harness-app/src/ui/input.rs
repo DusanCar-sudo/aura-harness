@@ -1,9 +1,9 @@
 //! Composer: text entry, attachments, model/effort pickers, send/stop.
 
 use crate::theme;
+use egui::{Key, RichText, Ui};
 use harness_core::attach::Attachment;
 use harness_core::config::{EffortChoice, ModelChoice};
-use egui::{Key, RichText, Ui};
 
 /// What the user did in the composer this frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,7 +105,10 @@ pub fn show(ui: &mut Ui, state: &mut ComposerState<'_>) -> Option<ComposerAction
             action = Some(ComposerAction::ToggleMic);
         }
 
-        let current = state.selected_model.as_deref().unwrap_or_else(|| model_label(*state.model));
+        let current = state
+            .selected_model
+            .as_deref()
+            .unwrap_or_else(|| model_label(*state.model));
         let current_name = harness_core::models::display_name(current);
         if ui
             .button(format!("Model: {current_name}"))
@@ -144,8 +147,9 @@ pub fn show(ui: &mut Ui, state: &mut ComposerState<'_>) -> Option<ComposerAction
                     action = Some(ComposerAction::Stop);
                 }
             } else {
-                let send = egui::Button::new(RichText::new("Send").color(theme::on_accent()).strong())
-                    .fill(theme::accent());
+                let send =
+                    egui::Button::new(RichText::new("Send").color(theme::on_accent()).strong())
+                        .fill(theme::accent());
                 if ui.add(send).clicked() {
                     action = Some(ComposerAction::Send);
                 }

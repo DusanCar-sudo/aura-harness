@@ -1,9 +1,9 @@
 //! Left sidebar: brand mark, conversation list, plugin status, settings entry.
 
 use crate::theme;
+use egui::{Align, Layout, RichText, Ui};
 use harness_core::config::ThemeChoice;
 use harness_core::session::SessionHeader;
-use egui::{Align, Layout, RichText, Ui};
 
 /// What the user did in the sidebar this frame.
 #[derive(Debug, Clone)]
@@ -51,7 +51,12 @@ pub fn show(ui: &mut Ui, state: &SidebarState<'_>) -> Option<SidebarAction> {
         }
         ui.add_space(4.0);
         ui.vertical(|ui| {
-            ui.label(RichText::new("AURA").color(theme::accent()).strong().size(24.0));
+            ui.label(
+                RichText::new("AURA")
+                    .color(theme::accent())
+                    .strong()
+                    .size(24.0),
+            );
             ui.label(RichText::new("harness").color(theme::dim()).size(11.0));
         });
     });
@@ -86,16 +91,19 @@ pub fn show(ui: &mut Ui, state: &SidebarState<'_>) -> Option<SidebarAction> {
                     } else if lbl.clicked() {
                         action = Some(SidebarAction::Open(header.id.clone()));
                     }
-                    if lbl.context_menu(|ui| {
-                        if ui.button("Rename").clicked() {
-                            action = Some(SidebarAction::RenameRequest(header.id.clone()));
-                            ui.close_menu();
-                        }
-                        if ui.button("Delete").clicked() {
-                            action = Some(SidebarAction::Delete(header.id.clone()));
-                            ui.close_menu();
-                        }
-                    }).is_some() {
+                    if lbl
+                        .context_menu(|ui| {
+                            if ui.button("Rename").clicked() {
+                                action = Some(SidebarAction::RenameRequest(header.id.clone()));
+                                ui.close_menu();
+                            }
+                            if ui.button("Delete").clicked() {
+                                action = Some(SidebarAction::Delete(header.id.clone()));
+                                ui.close_menu();
+                            }
+                        })
+                        .is_some()
+                    {
                         // menu opened; nothing else to do
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -155,10 +163,9 @@ pub fn show(ui: &mut Ui, state: &SidebarState<'_>) -> Option<SidebarAction> {
                         ui.selectable_value(&mut pick, choice, choice.label());
                     }
                 });
-            palette.response.on_hover_text(format!(
-                "Theme · {}",
-                state.theme.label()
-            ));
+            palette
+                .response
+                .on_hover_text(format!("Theme · {}", state.theme.label()));
         });
         ui.add_space(6.0);
         ui.separator();

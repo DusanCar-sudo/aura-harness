@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Archimedes — the verification layer of Aura Harness</title>
+<meta name="description" content="A cheap model tries first, an independent verifier decides, and every task returns something: an answer, or a training example. The Archimedes Principle, explained visually.">
+<meta name="author" content="Dušan Milosavljević">
+<meta name="theme-color" content="#070907">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Archimedes — the verification layer">
+<meta property="og:description" content="Loose on the way in, strict on the way out. Every task returns an answer or a lesson.">
+<link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/clash-display-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/barlow-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/fonts/fonts.css">
+<link rel="stylesheet" href="assets/css/archimedes.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="top">
+  <div class="shell top__in">
+    <a class="brand" href="#main" aria-label="Archimedes, home">
+      <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        <path d="M6 9h20l-2.5 17h-15z" fill="none" stroke="#f2ebc9" stroke-width="2"/>
+        <path d="M7.4 17h17.2l-1.2 8H8.6z" fill="#e7cf85"/>
+      </svg>
+      Archimedes
+    </a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#loose">Why it's loose</a>
+      <a href="#rule">The one rule</a>
+      <a href="#simulate">Try it</a>
+      <a href="#evidence">Evidence</a>
+    </nav>
+    <a class="btn btn--gold btn--sm" href="#read">Read the paper</a>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero">
+  <div class="shell">
+    <p class="eyebrow">Aura Harness · <b>the verification layer</b></p>
+    <h1><span>Try cheap.</span><span>Check honestly.</span><span><em>Keep everything.</em></span></h1>
+    <p class="lede">Archimedes is the heart of Aura Harness. A small, cheap model attempts the task first. A separate verifier model judges the attempt. If it passes, you have an answer for a fraction of the price. If it fails, the large model answers, and the miss is kept as a training example. Either way, the task returns something.</p>
+    <ul class="hero__outcomes" aria-label="Possible outcomes">
+      <li><span class="dot dot--lime"></span>Accepted → answer at small cost</li>
+      <li><span class="dot dot--gold"></span>Rejected → answer + training pair</li>
+      <li><span class="dot dot--mute"></span>Not trusted yet → answer from large</li>
+      <li><span class="dot dot--rust"></span>False accept → the one real loss</li>
+    </ul>
+  </div>
+</section>
+
+<section class="section" id="how">
+  <div class="shell">
+    <p class="eyebrow">01 · <b>How it works</b></p>
+    <h2>One task, <em>three paths</em>, no dead ends.</h2>
+    <p class="lede">Watch tasks flow through the gate. Grey dots are tasks waiting for a verdict. Green ones were accepted. Gold ones were rejected and escalated, and each one leaves a pale training dot behind that flows back to the small model.</p>
+
+    <figure class="flow">
+      <div class="flow__scroll">
+        <svg viewBox="0 0 980 390" role="img" aria-labelledby="flow-title flow-desc" data-flow>
+          <title id="flow-title">The Archimedes loop</title>
+          <desc id="flow-desc">A task enters the gate. If the small model is trusted, or a random probe fires, the small model attempts it and a distinct verifier judges the attempt. Accepted attempts become answers. Rejected attempts escalate to the large model, which answers, and the task, the failed attempt and the correct answer become a training pair that flows back to the small model. Tasks the gate does not yet trust go straight to the large model. Every verdict updates the gate's evidence.</desc>
+          <defs>
+            <marker id="m-mute" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="rgba(233,227,211,.5)"/></marker>
+            <marker id="m-lime" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#a3bd90"/></marker>
+            <marker id="m-gold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#e7cf85"/></marker>
+          </defs>
+
+          <path id="w-in" class="wire" d="M140 200H180" marker-end="url(#m-mute)"/>
+          <path id="w-try" class="wire" d="M330 200H370" marker-end="url(#m-mute)"/>
+          <path id="w-check" class="wire" d="M520 200H560" marker-end="url(#m-mute)"/>
+          <path id="w-accept" class="wire wire--accept" d="M710 190C750 190 750 72 790 72" marker-end="url(#m-lime)"/>
+          <path id="w-reject" class="wire wire--reject" d="M710 200H790" marker-end="url(#m-gold)"/>
+          <path id="w-large-ans" class="wire wire--reject" d="M875 168V104" marker-end="url(#m-gold)"/>
+          <path id="w-lesson" class="wire wire--learn" d="M875 232V300" marker-end="url(#m-gold)"/>
+          <path id="w-learn" class="wire wire--learn" d="M790 332H445V232" marker-end="url(#m-gold)"/>
+          <path id="w-skip" class="wire" d="M255 232V276H770V214H790" marker-end="url(#m-mute)"/>
+          <path id="w-evid" class="wire wire--evidence" d="M635 168V132H255V168" marker-end="url(#m-mute)"/>
+
+          <text class="wlabel wlabel--accept" x="720" y="122">accept</text>
+          <text class="wlabel wlabel--reject" x="724" y="192">reject</text>
+          <text class="wlabel wlabel--learn" x="888" y="272">+ lesson</text>
+          <text class="wlabel wlabel--learn" x="520" y="352">trains the small model</text>
+          <text class="wlabel" x="290" y="296">not trusted yet → straight to large</text>
+          <text class="wlabel" x="370" y="124">every verdict is evidence for the gate</text>
+
+          <g class="node"><rect x="20" y="168" width="120" height="64" rx="12"/><text x="80" y="198">Task</text><text class="sub" x="80" y="218">any request</text></g>
+          <g class="node"><rect x="180" y="168" width="150" height="64" rx="12"/><text x="255" y="198">Gate</text><text class="sub" x="255" y="218">trust + probe ε</text></g>
+          <g class="node node--small"><rect x="370" y="168" width="150" height="64" rx="12"/><text x="445" y="198">Small model</text><text class="sub" x="445" y="218">cheap · c_S</text></g>
+          <g class="node node--verifier"><rect x="560" y="168" width="150" height="64" rx="12"/><text x="635" y="198">Verifier</text><text class="sub" x="635" y="218">a distinct model</text></g>
+          <g class="node node--answer"><rect x="790" y="40" width="170" height="64" rx="12"/><text x="875" y="70">Answer</text><text class="sub" x="875" y="90">delivered</text></g>
+          <g class="node node--large"><rect x="790" y="168" width="170" height="64" rx="12"/><text x="875" y="198">Large model</text><text class="sub" x="875" y="218">expensive · c_L</text></g>
+          <g class="node node--lesson"><rect x="790" y="300" width="170" height="64" rx="12"/><text x="875" y="330">Training pair</text><text class="sub" x="875" y="350">task · miss · fix</text></g>
+          <g data-tokens></g>
+        </svg>
+      </div>
+      <figcaption>Live loop, illustrative rates. On a phone, scroll the diagram sideways. The animation stays off if your system asks for reduced motion.</figcaption>
+    </figure>
+
+    <div class="steps">
+      <div class="step"><span class="step__no">01 · GATE</span><h3>Should the small model try?</h3><p>The gate keeps a running record per kind of task. Once a kind has enough verdicts and passes often enough to pay off, the small model tries it every time. Before that, a probe (ε) still lets it try now and then, so the gate can learn.</p></div>
+      <div class="step"><span class="step__no">02 · VERIFY</span><h3>A different model judges</h3><p>The verifier is never the model that wrote the answer. It checks the attempt and says accept or reject. Its verdict is the only thing that decides what you receive.</p></div>
+      <div class="step"><span class="step__no">03 · KEEP</span><h3>Nothing is thrown away</h3><p>A pass is an answer. A fail goes to the large model, and the task, the miss and the fix become a training pair. The small model gets better on exactly the tasks it failed.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="section section--paper" id="loose">
+  <div class="shell">
+    <p class="eyebrow">02 · <b>Why the gate is loose</b></p>
+    <h2>Loose on the way in. <em>Strict on the way out.</em></h2>
+    <p class="lede">Most cascades guard the entrance: the small model only tries when someone is sure it will succeed. Archimedes lets it try early and often, because a failed try is not wasted. It costs one cheap call and buys a labelled example. The strictness lives in one place only: the verifier that decides what gets delivered.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">What happened</th><th scope="col">What you get</th><th scope="col">What it cost</th><th scope="col">Verdict</th></tr></thead>
+        <tbody>
+          <tr><td><span class="dot dot--lime"></span>Small model right, accepted</td><td>The answer</td><td>One cheap call (c_S)</td><td><span class="verdict verdict--win">answer</span></td></tr>
+          <tr><td><span class="dot dot--gold"></span>Small model wrong, rejected</td><td>The large model's answer <b>and</b> a training pair: task, miss, fix, verdict</td><td>c_S + c_L</td><td><span class="verdict verdict--win">answer + lesson</span></td></tr>
+          <tr><td><span class="dot dot--gold"></span>Small model right, rejected anyway</td><td>The large answer, a pair that still teaches, and a measurement of how picky the verifier is</td><td>c_S + c_L</td><td><span class="verdict verdict--win">answer + lesson</span></td></tr>
+          <tr><td><span class="dot dot--mute"></span>Gate didn't let it try</td><td>The large answer, and nothing learned</td><td>c_L</td><td><span class="verdict">answer only</span></td></tr>
+          <tr class="waste"><td><span class="dot dot--rust"></span>Small model wrong, accepted</td><td>A wrong answer, delivered</td><td>c_S</td><td><span class="verdict verdict--lose">the real loss</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Four of the five rows end with a correct answer. Two of them also leave a lesson behind. Only the last row is a true loss, and its rate is set by one number: how often the verifier accepts a wrong answer (α). That is why the verifier is the one part we never loosen.</p>
+    <p>A gate that is too strict starves instead. If the small model is never allowed to try, the gate never sees a verdict and can never learn to trust it. That is exactly what our own audit found (see <a href="#evidence">Evidence</a>), and it is why the probe ε exists.</p>
+    <p class="pull">Every task returns either an answer or a lesson. The only thing we guard is what we deliver.</p>
+  </div>
+</section>
+
+<section class="section" id="rule">
+  <div class="shell rule-grid">
+    <div>
+      <p class="eyebrow">03 · <b>The one rule</b></p>
+      <h2>The gate is never <em>safer than its verifier.</em></h2>
+      <p class="lede">The paper proves a simple bound. Because a rejected attempt always falls through to the large model, the only extra errors the gate can add are the wrong answers its verifier waves through.</p>
+    </div>
+    <div>
+      <div class="math">P[error] ≤ (1 − p)·α + (1 − p<sub>L</sub>)<small>p = small model accuracy · α = verifier false-accept rate · p<sub>L</sub> = large model accuracy</small></div>
+      <div class="math">pays off when q &gt; c<sub>S</sub> / c<sub>L</sub><small>q = pρ + (1 − p)α, the chance an attempt is accepted · ρ = verifier recall</small></div>
+      <ul class="checks">
+        <li><b>The verifier is a distinct model.</b> A model never grades its own work.</li>
+        <li><b>Rejection is cheap.</b> It costs one small call and returns a training pair.</li>
+        <li><b>Trust is earned per kind of task</b>, from verdicts, not assumed.</li>
+        <li><b>A probe keeps the door ajar</b> so a good pattern can't be locked out by early bad luck.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="simulate">
+  <div class="shell">
+    <p class="eyebrow">04 · <b>Try it</b></p>
+    <h2>Run 400 tasks <em>through the gate.</em></h2>
+    <p class="lede">Move the sliders. The run is simulated in your browser with a fixed random seed, so the same settings always give the same result. The gate trusts the small model once it has 5 verdicts and its pass rate beats the cost ratio. Until then, only the probe lets it try.</p>
+
+    <div class="sim">
+      <form class="panel" data-sim aria-label="Simulator settings">
+        <div class="field"><label for="s-p">Small model gets it right (p) <output for="s-p" data-out="p"></output></label><input id="s-p" name="p" type="range" min="0" max="1" step="0.01" value="0.7"><small>How good the cheap model really is.</small></div>
+        <div class="field"><label for="s-rho">Verifier accepts a right answer (ρ) <output for="s-rho" data-out="rho"></output></label><input id="s-rho" name="rho" type="range" min="0" max="1" step="0.01" value="0.9"><small>Lower means a pickier verifier.</small></div>
+        <div class="field"><label for="s-alpha">Verifier accepts a wrong answer (α) <output for="s-alpha" data-out="alpha"></output></label><input id="s-alpha" name="alpha" type="range" min="0" max="0.5" step="0.01" value="0.05"><small>The one number that sets the real loss.</small></div>
+        <div class="field"><label for="s-r">Cheap call cost vs large (c_S / c_L) <output for="s-r" data-out="r"></output></label><input id="s-r" name="r" type="range" min="0.01" max="0.6" step="0.01" value="0.1"><small>0.10 means the small call costs a tenth.</small></div>
+        <div class="field"><label for="s-eps">Probe rate (ε) <output for="s-eps" data-out="eps"></output></label><input id="s-eps" name="eps" type="range" min="0" max="1" step="0.01" value="0.1"><small>Set it to 0 to see the audit's stall.</small></div>
+      </form>
+
+      <div class="panel" aria-live="polite">
+        <div class="split" aria-hidden="true"><span class="s-acc" data-bar="acc"></span><span class="s-leak" data-bar="leak"></span><span class="s-rej" data-bar="rej"></span><span class="s-skip" data-bar="skip"></span></div>
+        <ul class="legend">
+          <li><span class="dot dot--lime"></span>Cheap answers <b data-count="acc"></b></li>
+          <li><span class="dot dot--gold"></span>Escalated + lesson <b data-count="rej"></b></li>
+          <li><span class="dot dot--mute"></span>Straight to large <b data-count="skip"></b></li>
+          <li><span class="dot dot--rust"></span>Wrong answers shipped <b data-count="leak"></b></li>
+        </ul>
+        <div class="kpis">
+          <div class="kpi"><span>Cost</span><b data-kpi="cost"></b><small>of always-large</small></div>
+          <div class="kpi"><span>Training pairs</span><b data-kpi="pairs"></b><small>harvested</small></div>
+          <div class="kpi"><span>Error added</span><b data-kpi="leak"></b><small>bounded by α</small></div>
+        </div>
+        <p class="verdict-line" data-verdict></p>
+        <div class="rounds">
+          <h3>Over the run</h3>
+          <svg viewBox="0 0 600 200" role="img" aria-label="Running cost and attempt rate over the 400 tasks" data-chart>
+            <line class="axis" x1="40" y1="170" x2="590" y2="170"/>
+            <line class="axis" x1="40" y1="10" x2="40" y2="170"/>
+            <line class="axis" x1="40" y1="63.3" x2="590" y2="63.3" stroke-dasharray="4 4"/>
+            <text x="44" y="58">1.0 = always-large cost</text>
+            <text x="40" y="190">task 1</text>
+            <text x="540" y="190">task 400</text>
+            <path class="line-c" data-line="cost"/>
+            <path class="line-p" data-line="attempt"/>
+          </svg>
+          <p class="note"><span style="color:#e7cf85">Dashed gold</span>: running cost against always-large. <span style="color:#a3bd90">Green</span>: share of tasks the small model was allowed to try. Simplification: the large model is treated as always right here.</p>
+          <p class="note" data-analytic></p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="evidence">
+  <div class="shell narrow">
+    <p class="eyebrow">05 · <b>Evidence, honestly</b></p>
+    <h2>What our own logs <em>actually showed.</em></h2>
+    <p class="lede">We audited every Aura Code episode from 13 September to 17 October. The result was negative, and it is the reason this design looks the way it does.</p>
+    <div class="stats">
+      <div class="stat"><b>1,225</b><span>real episodes audited</span></div>
+      <div class="stat"><b>1.049×10⁹</b><span>tokens in the window</span></div>
+      <div class="stat"><b>0 / 153</b><span>decisions where the cheap tier was tried</span></div>
+    </div>
+    <p>The gate was too strict to ever open. It waited for evidence before letting the small model try, but evidence only comes from tries. In the cost ledger, 0 of 143 tasks ever reached the minimum evidence. The paper calls this cold-start non-identifiability: attempts that never happen are never recorded, so the gate can't learn why they didn't happen.</p>
+    <p>The repair is the loose entrance: the probe ε. It guarantees a steady trickle of attempts, and with the verifier guarding the exit, each one returns an answer or a lesson.</p>
+    <div class="honest"><b>What we don't claim.</b> The paper is a preprint and has not been peer reviewed. The cheap tier has not yet fired in production, so no cost savings are claimed here. The evaluation protocol is pre-registered and has not been run yet. The simulator above illustrates the model's math; it is not a measurement.</div>
+  </div>
+</section>
+
+<section class="section" id="read">
+  <div class="shell">
+    <p class="eyebrow">06 · <b>Read more</b></p>
+    <h2>The paper, the product, <em>the people.</em></h2>
+    <div class="links">
+      <a class="card" href="https://doi.org/10.5281/zenodo.23551752" target="_blank" rel="noopener"><span>PREPRINT · DOI</span><b>Recursive Learning and the Archimedes Principle</b><p>Cost model, break-even proof, safety bound, the full audit and the pre-registered protocol.</p></a>
+      <a class="card" href="https://leanroboiq.online/method" target="_blank" rel="noopener"><span>IN USE</span><b>Lean Robotics IQ</b><p>Robot-learning data localization that ships every delivery with a verifier report.</p></a>
+      <a class="card" href="mailto:aura@leanproiq.com?subject=Archimedes"><span>CONTACT</span><b>aura@leanproiq.com</b><p>Questions, replication, or running Archimedes on your own workload.</p></a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="shell foot__in">
+    <p>© 2026 Praktess Research · Aura Code Project · Da Nang, Vietnam</p>
+    <p>Preprint research. No peer-reviewed claim is made on this site.</p>
+  </div>
+</footer>
+
+<script src="assets/js/archimedes.js" defer></script>
+</body>
+</html>

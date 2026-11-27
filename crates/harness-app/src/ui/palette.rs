@@ -26,11 +26,7 @@ pub enum PaletteAction {
 }
 
 /// Draw the palette above the composer. Returns the chosen action, if any.
-pub fn show(
-    ui: &mut Ui,
-    state: &mut PaletteState,
-    draft: &mut String,
-) -> Option<PaletteAction> {
+pub fn show(ui: &mut Ui, state: &mut PaletteState, draft: &mut String) -> Option<PaletteAction> {
     if !state.open {
         return None;
     }
@@ -83,7 +79,10 @@ pub fn show(
 
     egui::Frame::none()
         .fill(theme::bubble())
-        .stroke(egui::Stroke::new(1.0_f32, theme::accent().gamma_multiply(0.5)))
+        .stroke(egui::Stroke::new(
+            1.0_f32,
+            theme::accent().gamma_multiply(0.5),
+        ))
         .rounding(egui::Rounding::same(6.0))
         .inner_margin(egui::Margin::same(8.0))
         .show(ui, |ui| {

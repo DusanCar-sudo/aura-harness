@@ -1,0 +1,493 @@
+---
+title: The work — dataset localization deliverables | Lean Robotics IQ
+description: What a Lean Robotics IQ delivery contains: localized instructions and annotations, format adapters, a seven-check verifier protocol, a provenance ledger, and a verifier report that names every decision.
+og_title: A dataset goes in. A verifiable record comes out.
+og_description: The deliverables page — artifact families, format adapters, the seven verifier checks, and an illustrative provenance ledger. Nothing ships without a statement of what was verified.
+nav: work
+---
+<section class="pagehead">
+  <div class="shell pagehead__inner">
+    <div class="pagehead__top">
+      <p class="pagehead__crumb"><a href="index.html">Lean Robotics IQ</a> / The work</p>
+      <span class="tag tag--lime">Deliverables · protocol v0.4</span>
+    </div>
+    <p class="eyebrow">The work · what leaves the building</p>
+    <h1 class="display-xl pagehead__title">A dataset goes in. A <em>record</em> comes out.</h1>
+    <p class="pagehead__lede">A localization delivery is not a translated file. It is the localized data plus the evidence that every line still means the action it names: a verifier report, a provenance ledger, a termbase, and the questions the data could not settle.</p>
+    <div class="hero__cta" style="margin-top:30px">
+      <a class="btn btn--signal" href="index.html#contact">Start a pilot slice <span aria-hidden="true">→</span></a>
+      <a class="btn btn--ghost" href="#ledger">Look at the ledger <span aria-hidden="true">↓</span></a>
+    </div>
+    <div class="pagehead__meta">
+      <span><b>SOURCE</b> EN → SR / HR / BS / VI</span>
+      <span><b>INPUT</b> RLDS · X-EMBODIMENT · LEROBOT · HDF5-JSONL</span>
+      <span><b>VERIFIER</b> INDEPENDENT · EVERY LINE</span>
+      <span><b>METHOD</b> PREPRINT · 2025 · NOT PEER REVIEWED</span>
+    </div>
+  </div>
+</section>
+
+<section class="section section--tight" aria-label="Plate 03 — the archive of annotations">
+  <div class="shell">
+    <figure class="plate plate--wide reveal">
+      <div class="plate__img"><img src="assets/img/art/dataset.jpg" alt="A bone-and-ink duotone plate of an open specimen cabinet with shallow drawers and compartments." width="1200" height="800" loading="lazy" decoding="async"></div>
+      <figcaption class="plate__fig"><span><b>PLATE 03</b> — THE ARCHIVE OF ANNOTATIONS</span><span>SDXS·512 / ON-DEVICE</span></figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="section section--paper-2" id="anatomy">
+  <div class="shell">
+    <div class="sec-head">
+      <div class="sec-head__main reveal">
+        <div class="sec-head__index"><span>01</span> The anatomy <span>Two bundles, one packet</span></div>
+        <h2 class="display-l">Input is a promise. Output is <span class="accent">evidence</span>.</h2>
+      </div>
+      <div class="sec-head__aside reveal" style="--d:100ms">
+        <p>A delivery is two bundles that have to match: what you hand over, and what comes back with a record attached. If the second cannot be checked against the first, the first was not a delivery.</p>
+      </div>
+    </div>
+
+    <div class="two-col reveal" style="align-items:stretch">
+      <div class="anatomy">
+        <div class="anatomy__head">Input bundle — what we need</div>
+        <ul>
+          <li><span><b>The export, plus one readable sample.</b><span>The dataset in its native format, and a sample shard we are allowed to read end to end.</span></span></li>
+          <li><span><b>The schema and the field map.</b><span>Where instructions, subtasks, captions and success criteria live; which fields are source and which are derived.</span></span></li>
+          <li><span><b>Segment alignment.</b><span>Where each string starts and ends against the action timeline, with timestep or frame ids.</span></span></li>
+          <li><span><b>Target languages and variants.</b><span>Script preferences (Latin or Cyrillic), region tags and register conventions, decided once.</span></span></li>
+          <li><span><b>Termbase, or permission to build one.</b><span>Existing object names, verb conventions, units, safety phrasing and brand terms.</span></span></li>
+          <li><span><b>An evaluation slice.</b><span>200–500 lines your own reviewers can score blind against the source scene.</span></span></li>
+          <li><span><b>A reviewer who can settle a referent.</b><span>One person on your side who can answer “which block?” in under a day.</span></span></li>
+          <li><span><b>The legal basis.</b><span>A licence for the source data, and confirmation that the ledger may be retained after delivery.</span></span></li>
+        </ul>
+      </div>
+      <div class="anatomy">
+        <div class="anatomy__head">Output bundle — what ships</div>
+        <ul>
+          <li><span><b>Localized data, keyed to source ids.</b><span>New language fields beside the source. The source string is never overwritten.</span></span></li>
+          <li><span><b>The format adapter.</b><span>A field map plus a validator that writes localized text into your schema and fails loudly when it does not fit.</span></span></li>
+          <li><span><b>The verifier report.</b><span>Every line with its verdict, the check that failed, and the evidence the verifier used.</span></span></li>
+          <li><span><b>The provenance ledger.</b><span>Line id, source, target, decision, verifier, reviewer, termbase version, timestamp.</span></span></li>
+          <li><span><b>The termbase artifact.</b><span>Object names, verbs, units and register decisions as a versioned file — not a glossary in an email.</span></span></li>
+          <li><span><b>The adjudication log.</b><span>Disputes and how they were resolved, kept as decisions rather than averaged into a score.</span></span></li>
+          <li><span><b>Open questions.</b><span>Everything the data could not settle, with the options and our recommendation.</span></span></li>
+          <li><span><b>A re-run manifest.</b><span>Pipeline version and settings, so a delta batch is comparable with the first delivery.</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="prose reveal" style="margin-top:24px;max-width:80ch">
+      <p>We do not need your model weights, and we do not train on your data. The input bundle is a reading and writing job, not a systems integration. If you want the argument for why this layer matters before the plumbing, it is on the front page: <a href="index.html#problem">the instruction layer is monolingual, and the deployment is not</a>.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="artifacts">
+  <div class="shell">
+    <div class="sec-head">
+      <div class="sec-head__main reveal">
+        <div class="sec-head__index"><span>02</span> Artifact families <span>The typed units</span></div>
+        <h2 class="display-l">Seven artifact types. One rule: the <span class="accent">referent</span> survives.</h2>
+      </div>
+      <div class="sec-head__aside reveal" style="--d:100ms">
+        <p>An instruction is not the only string that can break a policy. Captions, success criteria and failure notes carry the same referents — and the same ways of losing them.</p>
+      </div>
+    </div>
+
+    <div class="tablewrap reveal">
+      <table class="data">
+        <thead>
+          <tr>
+            <th scope="col">Artifact</th>
+            <th scope="col">Source example (EN)</th>
+            <th scope="col">What is preserved</th>
+            <th scope="col">Verifier check</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>instruction</td>
+            <td>“Pick up the blue block and place it in the red bowl.”</td>
+            <td>The action spine — reach, grasp, lift, move, place — with both referents bound to the same object instances in the scene.</td>
+            <td>Referent identity; spine order; no constraint added or dropped.</td>
+          </tr>
+          <tr>
+            <td>subtask</td>
+            <td>“grasp the blue block”</td>
+            <td>The timestep range it labels and the verb class it asserts: grasp, not lift or move.</td>
+            <td>Segment alignment against the action timeline.</td>
+          </tr>
+          <tr>
+            <td>caption</td>
+            <td>“A robot arm lifts a blue block above a red bowl.”</td>
+            <td>Object classes, spatial relations (above, inside, beside) and the recorded viewpoint.</td>
+            <td>Frame of reference; nothing in the scene invented.</td>
+          </tr>
+          <tr>
+            <td>success&nbsp;criterion</td>
+            <td>“The blue block rests inside the red bowl and the gripper is open.”</td>
+            <td>The binary condition, object identity, spatial predicate and gripper state.</td>
+            <td>Decidability: the condition can still be scored yes or no.</td>
+          </tr>
+          <tr>
+            <td>failure&nbsp;note</td>
+            <td>“Block knocked the bowl off the table.”</td>
+            <td>Event roles — actor, object, consequence — and the failure mode, without blame or interpretation.</td>
+            <td>Event roles; tense and modality; no cause invented.</td>
+          </tr>
+          <tr>
+            <td>dialogue&nbsp;turn</td>
+            <td>Operator: “Not that one — the blue block on the left.”</td>
+            <td>Speaker, turn order, correction target and the deixis that points at it.</td>
+            <td>Deixis; register; turn boundary.</td>
+          </tr>
+          <tr>
+            <td>eval&nbsp;rubric</td>
+            <td>“3 — places the block in the bowl without knocking it over. 1 — drops it outside.”</td>
+            <td>Score anchors, their order, and the criteria each anchor names.</td>
+            <td>Numerals; scale direction; comparability with the source rubric.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="ledger__note reveal">
+      <p>Examples are illustrative strings written to a standard manipulation schema — not client data. Field names differ per dataset; the artifact type is what stays constant.</p>
+      <span class="tag">Illustrative</span>
+    </div>
+  </div>
+</section>
+
+<section class="section section--paper-2" id="formats">
+  <div class="shell">
+    <div class="sec-head">
+      <div class="sec-head__main reveal">
+        <div class="sec-head__index"><span>03</span> Format support <span>Adapters, not conversions</span></div>
+        <h2 class="display-l">The format stays yours. The <span class="accent">language</span> layer moves.</h2>
+      </div>
+      <div class="sec-head__aside reveal" style="--d:100ms">
+        <p>We do not convert your dataset into our format and hand it back. We read the format it already has, localize the language fields, and map the result to your schema with an adapter you keep.</p>
+      </div>
+    </div>
+
+    <div class="deliver__grid reveal">
+      <article class="dcard">
+        <span class="dcard__no">01 / RLDS</span>
+        <h3 class="h3">Episodes, steps, sidecar</h3>
+        <p>RLDS is the substrate under OXE, DROID and BridgeData V2: episodes of steps, with the instruction typically repeated on each step. Localized copies are keyed to the same episode and step ids; the source string stays in a sidecar.</p>
+        <div class="dcard__tags"><span>tfds</span><span>episodes</span><span>steps</span><span>sidecar</span></div>
+      </article>
+      <article class="dcard">
+        <span class="dcard__no">02 / OPEN X-EMBODIMENT</span>
+        <h3 class="h3">One schema, sixty cards</h3>
+        <p>The pool standardises episodes into a shared schema, yet each dataset card keeps its own vocabulary and annotation style. Each source gets its own field map; datasets whose card lists no annotations need an annotation pass first, scoped separately.</p>
+        <div class="dcard__tags"><span>field map</span><span>dataset cards</span><span>annotation style</span><span>vocabulary</span></div>
+      </article>
+      <article class="dcard">
+        <span class="dcard__no">03 / LEROBOT</span>
+        <h3 class="h3">Tasks, IDs, locale files</h3>
+        <p>Task strings live in <code>meta/tasks.jsonl</code> mapped to integer IDs, with optional language columns in the Parquet. We translate the task text and keep <code>task_index</code> stable so training configs do not break; a provenance file joins the meta.</p>
+        <div class="dcard__tags"><span>tasks.jsonl</span><span>task_index</span><span>language columns</span><span>provenance</span></div>
+      </article>
+      <article class="dcard">
+        <span class="dcard__no">04 / HDF5 · JSONL</span>
+        <h3 class="h3">Attributes and manifests</h3>
+        <p>In LIBERO-style HDF5 the instruction sits in <code>problem_info</code> attributes on the demo group; in JSONL it is a per-line record. Provenance joins by path and pointer, not row number, so a re-export does not break the ledger.</p>
+        <div class="dcard__tags"><span>hdf5</span><span>jsonl</span><span>problem_info</span><span>line-addressable</span></div>
+      </article>
+    </div>
+
+    <div class="callout reveal" style="margin-top:30px">
+      <span class="callout__tag">Round-trip check</span>
+      <p><b>Nothing leaves the pipeline except the language fields — and the diff is the check.</b> We localize, remove the localized fields, and compare the remainder against the source. If a non-language field moves, the delivery fails. Where a schema has no room for a parallel field, we say so at intake instead of overwriting the source.</p>
+    </div>
+
+    <div class="prose reveal" style="margin-top:26px">
+      <p>Formats are mapped to the client's schema, not the other way round. The adapter is an artifact you keep: a field map and a validator, versioned with the delivery, that runs when the data grows rather than describing what happened once. If the validator cannot prove the round trip on your format, the honest answer is that the format needs an amendment — and we would rather say that before the batch than after it. The format and dataset references we check against are listed in the <a href="method.html#references">method page's references</a>.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="verifier">
+  <div class="shell">
+    <div class="sec-head">
+      <div class="sec-head__main reveal">
+        <div class="sec-head__index"><span>04</span> The verifier <span>Seven checks + the hold rule</span></div>
+        <h2 class="display-l">The verifier is not the <span class="accent">producer</span>.</h2>
+      </div>
+      <div class="sec-head__aside reveal" style="--d:100ms">
+        <p>Seven checks run as a separate pass, by a reviewer who does not see the producer's reasoning until the pass is closed. A line that fails any check does not ship quietly.</p>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="reveal">
+        <p class="lede" style="margin-bottom:22px">Every line is checked against the source scene, not only the source sentence. A translation can be grammatical and still change the task; the checks exist to catch that case, in this order.</p>
+        <div class="prose">
+          <p>Quality here is a bound, not a promise. The preprint's safety envelope (Proposition 6.11) says a gated system can never be safer than its verifier — adapted to this work, a delivery can never be safer than its review. So the delivery is built to let you inspect the verifier instead of trusting the producer. The report names each rejected line, the check that failed and the reviewer who settled it. The producer's confidence is not admissible evidence.</p>
+          <p>A line that fails any check is held, escalated to a named human reviewer, and either revised with the decision logged or delivered as an open question. It is never averaged into a score.</p>
+        </div>
+        <p style="margin-top:24px"><a class="link-arrow" href="assets/docs/Milosavljevic_2025_Recursive-Learning-and-the-Archimedes-Principle.pdf" target="_blank" rel="noopener">Proposition 6.11 in the preprint — PDF <span aria-hidden="true">↗</span></a></p>
+      </div>
+      <figure class="plate plate--wide reveal" style="--d:120ms">
+        <div class="plate__img"><img src="assets/img/art/verify.jpg" alt="A bone-and-ink duotone plate of a mechanical inspection bench holding a paper sheet, with a scanner head and a circular gauge." width="1200" height="800" loading="lazy" decoding="async"></div>
+        <figcaption class="plate__fig"><span><b>PLATE 06</b> — THE VERIFIER</span><span>SDXS·512 / ON-DEVICE</span></figcaption>
+      </figure>
+    </div>
+
+    <div class="qa reveal" style="margin-top:34px">
+      <div class="qa__item">
+        <span class="qa__no">01 / REFERENT</span>
+        <h4>Referent identity</h4>
+        <p>The target phrase must denote the same object instance in the scene, not the same dictionary entry. “The blue block” is one block, not any blue block.</p>
+      </div>
+      <div class="qa__item">
+        <span class="qa__no">02 / SEGMENT</span>
+        <h4>Segment alignment</h4>
+        <p>Each string stays keyed to the same timestep, subtask and action segment. A paraphrase that shifts a boundary corrupts the label even when it reads well.</p>
+      </div>
+      <div class="qa__item">
+        <span class="qa__no">03 / GRAMMAR</span>
+        <h4>Morphology and agreement</h4>
+        <p>Gender, noun class, case and clitics. The pronoun has to resolve to the planned referent, not merely to a grammatical antecedent.</p>
+      </div>
+      <div class="qa__item">
+        <span class="qa__no">04 / QUANTITY</span>
+        <h4>Numerals and units</h4>
+        <p>Counts, fractions, dimensions, cm or mm, temperature, velocity. Conversion happens only as a logged decision; “two” is not “a couple”.</p>
+      </div>
+      <div class="qa__item">
+        <span class="qa__no">05 / FRAME</span>
+        <h4>Deixis and frame of reference</h4>
+        <p>Left, right, toward, behind — in the robot frame, the camera frame or the operator frame, whichever the dataset records. The frame is a field, not an assumption.</p>
+      </div>
+      <div class="qa__item">
+        <span class="qa__no">06 / REGISTER</span>
+        <h4>Register</h4>
+        <p>Formal or informal imperative, per dataset convention. The polite form is a product decision written down once, not a translator's mood.</p>
+      </div>
+      <div class="qa__item">
+        <span class="qa__no">07 / AFFORDANCE</span>
+        <h4>Cultural affordance</h4>
+        <p>The object and place the robot will actually meet: appliance types, heights, button layouts. If the target scene cannot support the source affordance, the line is flagged, not localized around.</p>
+      </div>
+      <div class="qa__item">
+        <span class="qa__no">08 / FAILURE</span>
+        <h4>When a check fails</h4>
+        <p>The line is held. It goes to a named human reviewer with the failed check and the evidence; the decision is logged. Unresolved lines ship as open questions.</p>
+      </div>
+    </div>
+
+    <div class="callout reveal" style="margin-top:30px">
+      <span class="callout__tag">Paraphrase sets &amp; negative controls</span>
+      <p><b>One literal translation is not a localization.</b> A 2026 Greek VLA study found that policies overfit the translator's phrasing, and that training on seven phrasings per task roughly halved the penalty. A separate Greek LIBERO policy card still scored 21.4% on a wrong-instruction control — a reminder that a localized policy can look better than it is. So the deliverable can include a reviewed paraphrase set per task (each phrasing provenance-linked), plus wrong-instruction controls, and we report both rather than a single headline number. <a href="method.html#references" style="color:var(--signal-deep);text-decoration:underline;text-underline-offset:3px">Sources <span aria-hidden="true">→</span></a></p>
+    </div>
+
+    <div class="ledger__note reveal" style="margin-top:22px">
+      <p>Checks are ordered: a line that fails referent identity is not evaluated for register. The protocol is versioned, and the verifier report carries the version so two deliveries can be compared.</p>
+      <span class="tag">Protocol v0.4</span>
+    </div>
+  </div>
+</section>
+
+<section class="section section--paper-2" id="ledger">
+  <div class="shell">
+    <div class="sec-head">
+      <div class="sec-head__main reveal">
+        <div class="sec-head__index"><span>05</span> The ledger <span>A worked sheet</span></div>
+        <h2 class="display-l">Every line leaves a <span class="accent">trace</span>.</h2>
+      </div>
+      <div class="sec-head__aside reveal" style="--d:100ms">
+        <p>The ledger adapts the preprint's episode record (Definition 3.4) with a language decision attached: small, typed and boring, so that a dispute a year later is a lookup instead of an argument.</p>
+      </div>
+    </div>
+
+    <div class="tablewrap reveal">
+      <table class="data" data-table>
+        <thead>
+          <tr>
+            <th scope="col">Line</th>
+            <th scope="col">Source string (EN)</th>
+            <th scope="col">Target</th>
+            <th scope="col">Decision</th>
+            <th scope="col">Verifier</th>
+            <th scope="col">Reviewer</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>L-0007</td>
+            <td>“Pick up the blue block and place it in the red bowl.”</td>
+            <td>SR</td>
+            <td>Feminine <em>kocka</em> governs agreement — <em>plavu kocku</em> — and the clitic <em>je</em> resolves to the block, not the bowl.</td>
+            <td>pass</td>
+            <td>R-02</td>
+          </tr>
+          <tr>
+            <td>L-0012</td>
+            <td>“Push the red bowl toward the camera.”</td>
+            <td>VI</td>
+            <td><em>về phía camera</em> kept as camera-frame deixis; no left/right conversion was introduced.</td>
+            <td>pass</td>
+            <td>R-04</td>
+          </tr>
+          <tr>
+            <td>L-0021</td>
+            <td>“Grasp the handle on the left side of the drawer.”</td>
+            <td>DE</td>
+            <td><em>links</em> kept, then flagged: the source does not record a viewpoint, so the frame is stated in the decision rather than guessed.</td>
+            <td>pass after revision</td>
+            <td>R-01</td>
+          </tr>
+          <tr>
+            <td>L-0034</td>
+            <td>“Put the block in the microwave.”</td>
+            <td>ES</td>
+            <td>Affordance mismatch: the target kitchen has no microwave at working height. Held as an open question, not translated around.</td>
+            <td>hold</td>
+            <td>R-03</td>
+          </tr>
+          <tr>
+            <td>L-0048</td>
+            <td>“Lift the small block two centimetres.”</td>
+            <td>JA</td>
+            <td>Unit kept as cm; the numeral was not softened; polite form follows the dataset's register record.</td>
+            <td>pass</td>
+            <td>R-05</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="ledger__note reveal">
+      <p>Illustrative ledger sample — not client data. Line ids and reviewer ids are invented to show the record's shape. Verifier status is one of <code>pass</code>, <code>pass after revision</code> or <code>hold</code>; the target strings follow the same protocol as the front-page sample. Definition 3.4 in the preprint is the episode record; this is that record with a language decision attached.</p>
+      <span class="tag tag--signal">Illustrative sample</span>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="boundaries">
+  <div class="shell">
+    <div class="sec-head">
+      <div class="sec-head__main reveal">
+        <div class="sec-head__index"><span>06</span> Boundaries <span>What changes hands</span></div>
+        <h2 class="display-l">Scoped on both sides, in <span class="accent">writing</span>.</h2>
+      </div>
+      <div class="sec-head__aside reveal" style="--d:100ms">
+        <p>The work is data in, evidence out. Everything else stays on your side of the line, and we write that down before the scope is signed — not after the first disagreement.</p>
+      </div>
+    </div>
+
+    <div class="eng__grid reveal">
+      <article class="engcard">
+        <span class="engcard__label">What we need from you</span>
+        <h3 class="h3">The intake</h3>
+        <ul>
+          <li>The dataset export and one readable sample</li>
+          <li>Target languages, scripts and regional variants</li>
+          <li>Segment annotations and the field map</li>
+          <li>A termbase, or permission to build one</li>
+          <li>An evaluation slice and a reviewer contact</li>
+        </ul>
+        <p class="engcard__foot">Intake ends when these exist</p>
+      </article>
+      <article class="engcard engcard--ink">
+        <span class="engcard__label">What you get back</span>
+        <h3 class="h3">The packet</h3>
+        <ul>
+          <li>Localized data in your own schema</li>
+          <li>Format adapter and validator</li>
+          <li>Verifier report and provenance ledger</li>
+          <li>Termbase and adjudication log</li>
+          <li>Open questions, written down</li>
+        </ul>
+        <p class="engcard__foot">Files, not promises</p>
+      </article>
+      <article class="engcard">
+        <span class="engcard__label">What we do not do</span>
+        <h3 class="h3">The line</h3>
+        <ul>
+          <li>Train, fine-tune or evaluate your model</li>
+          <li>Resell data or reuse it beyond the engagement</li>
+          <li>Pass unverified machine translation off as human work</li>
+          <li>Overwrite source fields, silently or otherwise</li>
+          <li>Quote a quality number we have not measured</li>
+        </ul>
+        <p class="engcard__foot">Stated before scope, not discovered later</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section section--paper-2" id="faq">
+  <div class="shell">
+    <div class="sec-head">
+      <div class="sec-head__main reveal">
+        <div class="sec-head__index"><span>07</span> Questions <span>Asked before the scope</span></div>
+        <h2 class="display-l">Fair questions, plain <span class="accent">answers</span>.</h2>
+      </div>
+      <div class="sec-head__aside reveal" style="--d:100ms">
+        <p>Short answers here; the long versions are in the method, in the reference list and in the delivery itself. If a question is missing, email it — the answer belongs in intake, not in a brochure.</p>
+      </div>
+    </div>
+
+    <div class="reveal">
+      <details class="faq">
+        <summary>Is this machine translation with a human check?</summary>
+        <div class="faq__body">
+          <p>No, and the distinction is the product. A model may produce a first pass, but no line is delivered because a model said so: it is delivered because an independent verifier accepted it against the scene, the segment map and the schema. Unverified machine translation is not passed off as human work here — that is one of the things on the do-not list.</p>
+        </div>
+      </details>
+      <details class="faq">
+        <summary>Do you need our model weights or access to the robot?</summary>
+        <div class="faq__body">
+          <p>No. We need the dataset export, one sample we can read, the field map, segment annotations, the target languages and an evaluation slice. Nothing is trained on your data, and the ledger records what was read.</p>
+        </div>
+      </details>
+      <details class="faq">
+        <summary>What happens when the data cannot settle a referent?</summary>
+        <div class="faq__body">
+          <p>It becomes an open question in the delivery, with the evidence we have and the decision we recommend. We do not resolve it by choosing a plausible noun and hoping the reviewer is in a good mood.</p>
+        </div>
+      </details>
+      <details class="faq">
+        <summary>Can you work under NDA?</summary>
+        <div class="faq__body">
+          <p>Yes. Nothing about your data needs to be published: the ledger is yours. Every example on this site is written as an illustrative sample, never as client material — there is no client data on the site at all.</p>
+        </div>
+      </details>
+      <details class="faq">
+        <summary>Which languages do you take on?</summary>
+        <div class="faq__body">
+          <p>Founding lines are EN → SR, HR, BS and VI, with DE, ES, FR and JA opening. A line is a named reviewer, a termbase and a verification record — not a language tag in a dropdown. Right-to-left scripts are treated as a layout and alignment problem, not only a text problem.</p>
+          <p style="margin-top:14px"><a class="link-arrow" href="index.html#languages">The language lines <span aria-hidden="true">→</span></a></p>
+        </div>
+      </details>
+      <details class="faq">
+        <summary>How is quality reported — and why is there no percentage?</summary>
+        <div class="faq__body">
+          <p>As a record, not a score: pass, pass after revision or hold, each with the failed check and the reviewer. There is no single quality percentage on this site because we have not measured one on your data, and a number invented for a landing page is not evidence.</p>
+        </div>
+      </details>
+      <details class="faq">
+        <summary>Is the method peer reviewed?</summary>
+        <div class="faq__body">
+          <p>No. It is a preprint, and the site says so wherever the claims appear. The quality bound it gives is conditional on the verifier; the ledger is how you check the condition. The paper, including the negative result it reports, is public.</p>
+          <p style="margin-top:14px"><a class="link-arrow" href="method.html">Read the method <span aria-hidden="true">→</span></a></p>
+        </div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section class="section section--ink section--tight">
+  <div class="shell" style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:24px">
+    <div>
+      <p class="eyebrow" style="margin-bottom:12px">Next</p>
+      <h2 class="display-m" style="max-width:24ch">Send one dataset. Judge the <span class="accent">ledger</span>.</h2>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <a class="btn btn--signal" href="index.html#contact">Start a pilot slice <span aria-hidden="true">→</span></a>
+      <a class="btn btn--ghost" href="method.html#bench">Try the break-even bench <span aria-hidden="true">→</span></a>
+    </div>
+  </div>
+</section>

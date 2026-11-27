@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/assets/fonts/fonts.css">
+<style>
+  @font-face { font-family: 'Clash Display'; src: url('/assets/fonts/clash-display-600.woff2') format('woff2'); font-weight: 600; font-style: normal; font-display: block; }
+  @page { size: 1200px 630px; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { width: 1200px; height: 630px; overflow: hidden; }
+  .card {
+    position: relative; width: 1200px; height: 630px;
+    background: #0D0F0E; color: #EFEAE0; overflow: hidden;
+    font-family: 'Barlow', sans-serif;
+  }
+  .grid {
+    position: absolute; inset: 0;
+    background-image: linear-gradient(rgba(239,234,224,.055) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(239,234,224,.055) 1px, transparent 1px);
+    background-size: 100% 78px, 78px 100%;
+    mask-image: radial-gradient(120% 100% at 70% 20%, #000, transparent 78%);
+  }
+  .art {
+    position: absolute; right: 0; top: 0; width: 470px; height: 630px;
+    overflow: hidden;
+  }
+  .art img { width: 100%; height: 100%; object-fit: cover; object-position: 58% 40%;
+    filter: grayscale(1) contrast(1.22) brightness(.92); opacity: .9; }
+  .art::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(90deg, #0D0F0E 0%, rgba(13,15,14,.25) 42%, rgba(13,15,14,.72) 100%),
+                radial-gradient(120% 90% at 60% 40%, transparent 30%, rgba(13,15,14,.75) 100%);
+  }
+  .art::before {
+    content: ""; position: absolute; inset: 16px; border: 1px solid rgba(232,80,42,.5); z-index: 2;
+  }
+  .wrap { position: relative; z-index: 3; padding: 56px 60px; height: 100%; display: flex; flex-direction: column; }
+  .mark { display: flex; gap: 14px; align-items: center; }
+  .mark svg { width: 30px; height: 30px; }
+  .brand { font-family: 'Archivo', sans-serif; font-weight: 700; font-size: 19px; letter-spacing: -.01em; }
+  .brand em { font-style: normal; color: #FF7048; }
+  .eyebrow { margin-top: 14px; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: #C8F04B; }
+  h1 { margin-top: 34px; font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 58px; line-height: .97; letter-spacing: -.03em; max-width: 700px; }
+  h1 .muted { color: #8E978B; }
+  h1 .sig { color: #FF7048; }
+  h1 .accent { font-family: 'Clash Display', sans-serif; font-weight: 600; letter-spacing: -0.02em; color: #C8F04B; }
+  .foot { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; border-top: 1px solid rgba(239,234,224,.18); padding-top: 16px; max-width: 720px; }
+  .foot p { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .13em; text-transform: uppercase; color: #A7AFA2; line-height: 1.7; }
+  .foot b { color: #EFEAE0; font-weight: 500; }
+  .stamp { position: absolute; right: 24px; top: 24px; z-index: 4; writing-mode: vertical-rl;
+    font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: .24em; text-transform: uppercase;
+    color: #C8F04B; border: 1px solid rgba(200,240,75,.35); background: rgba(13,15,14,.8); padding: 8px 6px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="grid"></div>
+    <div class="art"><img src="/assets/img/art/hero-atlas.jpg" alt=""></div>
+    <span class="stamp">Lean Robotics IQ · 2026</span>
+    <div class="wrap">
+      <div class="mark">
+        <svg viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="6" y="6" width="9" height="9" fill="#EFEAE0"/>
+          <rect x="17" y="6" width="9" height="9" fill="#EFEAE0"/>
+          <rect x="6" y="17" width="9" height="9" fill="#EFEAE0"/>
+          <rect x="17" y="15" width="9" height="9" fill="#E8502A"/>
+        </svg>
+        <span class="brand">Lean Robotics <em>IQ</em></span>
+      </div>
+      <p class="eyebrow">Dataset localization for robot learning</p>
+      <h1>
+        <span class="muted">The instruction layer</span><br>
+        speaks English.<br>
+        <span class="sig">We localize</span><br>
+        <span class="accent">the rest.</span>
+      </h1>
+      <div class="foot">
+        <p><b>Instructions · annotations · scene text</b><br>Verified line by line. Preprint audit.</p>
+        <p style="text-align:right">aura@leanproiq.com<br>Praktess Research</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

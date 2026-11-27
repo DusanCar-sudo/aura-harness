@@ -73,7 +73,8 @@ impl PreviewState {
             return;
         }
         let target = preview::detect_as(root, self.kind);
-        if matches!((&self.target, &target), (Target::Web { root: a }, Target::Web { root: b }) if a == b) {
+        if matches!((&self.target, &target), (Target::Web { root: a }, Target::Web { root: b }) if a == b)
+        {
             self.scanned = root.to_path_buf();
             return;
         }
@@ -183,7 +184,9 @@ impl PreviewState {
     /// Pull in any finished capture. Call once per frame, whatever tab is up.
     pub fn poll(&mut self, ctx: &egui::Context) {
         let Some(rx) = &self.rx else { return };
-        let Ok((gen, result)) = rx.try_recv() else { return };
+        let Ok((gen, result)) = rx.try_recv() else {
+            return;
+        };
         if gen != self.generation {
             // Stale: the target changed while this capture was running.
             return;
@@ -200,11 +203,8 @@ impl PreviewState {
                         return;
                     }
                     let color = egui::ColorImage::from_rgba_unmultiplied([w, h], rgba.as_raw());
-                    self.shot = Some(ctx.load_texture(
-                        "aura-preview",
-                        color,
-                        egui::TextureOptions::LINEAR,
-                    ));
+                    self.shot =
+                        Some(ctx.load_texture("aura-preview", color, egui::TextureOptions::LINEAR));
                     self.shot_size = [w as f32, h as f32];
                     self.shot_at = Some(Instant::now());
                     self.error = None;
@@ -262,12 +262,7 @@ impl PreviewState {
 // ---------------------------------------------------------------------------
 
 /// Draw the Preview tab. `root` is the file-tree root (the project).
-pub fn show(
-    ui: &mut egui::Ui,
-    ctx: &egui::Context,
-    state: &mut PreviewState,
-    root: &Path,
-) {
+pub fn show(ui: &mut egui::Ui, ctx: &egui::Context, state: &mut PreviewState, root: &Path) {
     state.rescan(root);
     state.tick(ctx);
     state.poll(ctx);
@@ -332,7 +327,11 @@ pub fn show(
         Target::Android { apk } => (
             state.target.label().to_string(),
             match apk {
-                Some(a) => a.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                Some(a) => a
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
                 None => "gradle project (no APK built yet)".into(),
             },
         ),
@@ -343,12 +342,20 @@ pub fn show(
     } else {
         format!("{label} · {detail}")
     };
-    ui.label(egui::RichText::new(target_line).strong().color(theme_accent()));
+    ui.label(
+        egui::RichText::new(target_line)
+            .strong()
+            .color(theme_accent()),
+    );
     if let Target::Web { .. } = &state.target {
         if let Some(s) = &state.server {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(s.url()).small().color(theme_dim()));
-                if ui.small_button("📋").on_hover_text("Copy the preview URL").clicked() {
+                if ui
+                    .small_button("📋")
+                    .on_hover_text("Copy the preview URL")
+                    .clicked()
+                {
                     ui.ctx().copy_text(s.url());
                 }
             });
@@ -384,10 +391,7 @@ fn paint_shot(ui: &mut egui::Ui, state: &PreviewState) {
     let size = egui::vec2(nw * scale, nh * scale);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     ui.painter().rect_filled(rect, 6.0, egui::Color32::BLACK);
-    ui.put(
-        rect,
-        egui::Image::new((tex.id(), size)).rounding(6.0),
-    );
+    ui.put(rect, egui::Image::new((tex.id(), size)).rounding(6.0));
     if let Some(at) = state.shot_at {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
             ui.label(
@@ -415,13 +419,20 @@ fn empty_state(ui: &mut egui::Ui, ctx: &egui::Context, state: &mut PreviewState,
                     .strong()
                     .color(theme_accent()),
             );
-            ui.label(
-                "The harness looks under the file-tree root for a build it recognises:",
-            );
+            ui.label("The harness looks under the file-tree root for a build it recognises:");
             ui.add_space(2.0);
-            bullet(ui, "web — an `index.html` at the root or in dist/, build/web/, out/, public/");
-            bullet(ui, "android — an .apk, or a Gradle project (settings.gradle + app/)");
-            bullet(ui, "game — project.godot, a runnable binary, or bevy/phaser in the manifest");
+            bullet(
+                ui,
+                "web — an `index.html` at the root or in dist/, build/web/, out/, public/",
+            );
+            bullet(
+                ui,
+                "android — an .apk, or a Gradle project (settings.gradle + app/)",
+            );
+            bullet(
+                ui,
+                "game — project.godot, a runnable binary, or bevy/phaser in the manifest",
+            );
             ui.add_space(6.0);
             if ui.button("↻ Look again").clicked() {
                 state.force_rescan(root);
@@ -439,9 +450,11 @@ fn empty_state(ui: &mut egui::Ui, ctx: &egui::Context, state: &mut PreviewState,
             }
             ui.add_space(4.0);
             ui.label(
-                egui::RichText::new("With auto on, this repaints itself every time a build file changes.")
-                    .small()
-                    .weak(),
+                egui::RichText::new(
+                    "With auto on, this repaints itself every time a build file changes.",
+                )
+                .small()
+                .weak(),
             );
         }
         Target::Android { apk } => {
@@ -473,18 +486,17 @@ fn empty_state(ui: &mut egui::Ui, ctx: &egui::Context, state: &mut PreviewState,
             ui.add_space(4.0);
             match &state.device {
                 Some(d) => {
-                    ui.label(format!(
-                        "Device: {d} · capturing its screen.",
-                        d = d
-                    ));
+                    ui.label(format!("Device: {d} · capturing its screen.", d = d));
                     if ui.button("📸 Capture screen").clicked() {
                         state.spawn(ctx, Job::Adb);
                     }
                 }
                 None => {
                     ui.label(
-                        egui::RichText::new("No device or emulator attached (`adb devices` is empty).")
-                            .weak(),
+                        egui::RichText::new(
+                            "No device or emulator attached (`adb devices` is empty).",
+                        )
+                        .weak(),
                     );
                     if ui.button("↻ Check for a device").clicked() {
                         state.device = preview::adb_device();
@@ -510,9 +522,15 @@ fn empty_state(ui: &mut egui::Ui, ctx: &egui::Context, state: &mut PreviewState,
                     state.rx = None;
                 }
                 if ui.button("📸 Capture window").clicked() {
-                    state.spawn(ctx, Job::Window {
-                        hint: run.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
-                    });
+                    state.spawn(
+                        ctx,
+                        Job::Window {
+                            hint: run
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_default(),
+                        },
+                    );
                 }
             });
             ui.add_space(4.0);

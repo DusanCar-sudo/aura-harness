@@ -4,9 +4,9 @@
 //! writes (credentials 0600, config.toml, plugins.toml).
 
 use crate::theme;
+use egui::{RichText, Ui};
 use harness_core::config::{Config, EffortChoice, Plugins, ThemeChoice};
 use harness_core::models;
-use egui::{RichText, Ui};
 
 /// An MCP server found on this machine that is not yet configured here.
 #[derive(Debug, Clone)]
@@ -91,7 +91,12 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
     let mut action = None;
 
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Settings").color(theme::accent()).strong().size(18.0));
+        ui.label(
+            RichText::new("Settings")
+                .color(theme::accent())
+                .strong()
+                .size(18.0),
+        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button("Close").clicked() {
                 action = Some(SettingsAction::Close);
@@ -354,7 +359,7 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
                     "On: shell, write_file, edit_file and command tools run without asking.                  Off: every mutating tool shows an approve/reject card first.",
                 );
                 ui.add_space(8.0);
-            
+
                 ui.add_space(8.0);
                 ui.separator();
                 ui.label("System prompt");

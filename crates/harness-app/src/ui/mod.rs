@@ -37,7 +37,8 @@ pub fn row_button(
         } else {
             theme::bubble()
         };
-        ui.painter().rect_filled(rect, egui::Rounding::same(4.0), fill);
+        ui.painter()
+            .rect_filled(rect, egui::Rounding::same(4.0), fill);
     }
 
     let right_galley = if right.is_empty() {
@@ -54,7 +55,11 @@ pub fn row_button(
         .map(|g| g.size().x + 10.0)
         .unwrap_or(0.0);
 
-    let text_color = if selected { theme::accent() } else { theme::text() };
+    let text_color = if selected {
+        theme::accent()
+    } else {
+        theme::text()
+    };
     let clip = egui::Rect::from_min_max(
         rect.min + egui::vec2(6.0, 0.0),
         egui::pos2(rect.right() - right_width, rect.bottom()),
@@ -68,7 +73,10 @@ pub fn row_button(
     );
 
     if let Some(galley) = right_galley {
-        let pos = egui::pos2(rect.right() - 6.0 - galley.size().x, rect.center().y - galley.size().y / 2.0);
+        let pos = egui::pos2(
+            rect.right() - 6.0 - galley.size().x,
+            rect.center().y - galley.size().y / 2.0,
+        );
         ui.painter().galley(pos, galley, theme::dim());
     }
 
@@ -133,11 +141,20 @@ pub struct TextEditSpec<'a> {
 
 impl<'a> TextEditSpec<'a> {
     pub fn singleline() -> Self {
-        Self { multiline: false, hint: "", width: None, rows: 3, password: false }
+        Self {
+            multiline: false,
+            hint: "",
+            width: None,
+            rows: 3,
+            password: false,
+        }
     }
 
     pub fn multiline() -> Self {
-        Self { multiline: true, ..Self::singleline() }
+        Self {
+            multiline: true,
+            ..Self::singleline()
+        }
     }
 
     pub fn hint(mut self, hint: &'a str) -> Self {
@@ -171,11 +188,7 @@ enum MenuAction {
 /// A text field that behaves like a desktop one: right-click gives Cut, Copy,
 /// Paste and Select all, and Ctrl+A works. egui 0.29 ships neither, although
 /// it does wire Ctrl+C/X/V and Ctrl+Z/Y in `TextEdit`.
-pub fn text_edit(
-    ui: &mut egui::Ui,
-    text: &mut String,
-    spec: TextEditSpec<'_>,
-) -> egui::Response {
+pub fn text_edit(ui: &mut egui::Ui, text: &mut String, spec: TextEditSpec<'_>) -> egui::Response {
     let mut edit = if spec.multiline {
         egui::TextEdit::multiline(text)
     } else {
@@ -215,11 +228,17 @@ pub fn text_edit(
     let mut action = None;
     response.context_menu(|ui| {
         let has_selection = selection_range(&state).is_some();
-        if ui.add_enabled(has_selection, egui::Button::new("Cut")).clicked() {
+        if ui
+            .add_enabled(has_selection, egui::Button::new("Cut"))
+            .clicked()
+        {
             action = Some(MenuAction::Cut);
             ui.close_menu();
         }
-        if ui.add_enabled(has_selection, egui::Button::new("Copy")).clicked() {
+        if ui
+            .add_enabled(has_selection, egui::Button::new("Copy"))
+            .clicked()
+        {
             action = Some(MenuAction::Copy);
             ui.close_menu();
         }
@@ -274,7 +293,9 @@ fn selection_range(state: &egui::widgets::text_edit::TextEditState) -> Option<(u
 fn set_cursor(state: &mut egui::widgets::text_edit::TextEditState, index: usize) {
     state
         .cursor
-        .set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(index))));
+        .set_char_range(Some(egui::text::CCursorRange::one(
+            egui::text::CCursor::new(index),
+        )));
 }
 
 fn select_all(text: &str, state: &mut egui::widgets::text_edit::TextEditState) {
@@ -296,7 +317,11 @@ fn byte_index(text: &str, char_index: usize) -> usize {
         .unwrap_or(text.len())
 }
 
-fn insert_text(text: &mut String, state: &mut egui::widgets::text_edit::TextEditState, insert: &str) {
+fn insert_text(
+    text: &mut String,
+    state: &mut egui::widgets::text_edit::TextEditState,
+    insert: &str,
+) {
     let (a, b) = selection_range(state).unwrap_or_else(|| {
         let caret = state
             .cursor
