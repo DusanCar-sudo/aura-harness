@@ -235,6 +235,16 @@ async fn execute_tool(
     }
 }
 
+fn round_cap_message() -> String {
+    format!("stopped after {MAX_TOOL_ROUNDS} tool rounds")
+}
+
+/// True for the error the loop raises when it hits `MAX_TOOL_ROUNDS`; the UI
+/// offers a one-click Continue for it.
+pub fn is_round_cap_message(message: &str) -> bool {
+    message == round_cap_message()
+}
+
 /// Drive the loop to completion, emitting events as they happen.
 pub async fn run(input: LoopInput, events: mpsc::Sender<LoopEvent>) -> Result<()> {
     let LoopInput {
@@ -370,7 +380,7 @@ pub async fn run(input: LoopInput, events: mpsc::Sender<LoopEvent>) -> Result<()
         }
     }
 
-    let message = format!("stopped after {MAX_TOOL_ROUNDS} tool rounds");
+    let message = round_cap_message();
     let _ = events.send(LoopEvent::Failed(message.clone())).await;
     Err(Error::Invalid(message))
 }
@@ -431,6 +441,12 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].function.name, "one");
         assert_eq!(calls[1].function.arguments, "{}");
+    }
+
+    #[test]
+    fn round_cap_message_is_recognised() {
+        assert!(is_round_cap_message(&round_cap_message()));
+        assert!(!is_round_cap_message("stream idle timeout"));
     }
 
     #[test]

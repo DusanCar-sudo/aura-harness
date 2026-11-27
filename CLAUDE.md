@@ -197,14 +197,12 @@ Open items (priority order):
    response errors out instead of hanging the turn.
 2. Game + Android preview paths are best-effort (only web is verified live;
    Android needs a device attached).
-3. Provider dispatch in `descriptors.rs` is hand-rolled — a cleanup pass
-   would reduce duplication across the three transports.
-4. No automated UI-level end-to-end test of a chat→tool turn (loop level is
-   covered by `live_deepseek.rs`). Done by hand 2026-10-18: resume PDF →
-   portfolio site in a nested headless sway, run twice (22 tool rounds before
-   the cwd fix, 7 after; recipe in `docs/SOLUTION.md`).
-5. A turn that needs more than `MAX_TOOL_ROUNDS = 20` stops abruptly while
-   verifying; a "continue" affordance or a higher cap is undecided.
+3. DONE 2026-11-09: transport dispatch is one `detect_provider_kind` match in
+   `api::stream_chat`; dead `provider/{factory,transport}.rs` stubs removed.
+4. DONE 2026-11-09: offline chat->tool->answer test with a mock SSE server
+   (`crates/harness-core/tests/mock_turn.rs`). Still no egui-level E2E.
+5. DONE 2026-11-09: cap is `MAX_TOOL_ROUNDS = 150`; hitting it shows a
+   one-click **Continue** next to the error banner (sends "continue").
 
 Repo is public: **github.com/DusanCar-sudo/aura-harness** (published
 2026-10-17 with Dusan's approval). Secrets are kept out of the repo —

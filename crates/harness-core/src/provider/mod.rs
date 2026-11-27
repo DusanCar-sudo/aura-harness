@@ -6,9 +6,7 @@
 
 pub mod anthropic;
 pub mod descriptors;
-pub mod factory;
 pub mod google;
-pub mod transport;
 
 pub use anthropic::stream_chat as stream_anthropic;
 pub use google::stream_chat as stream_google;

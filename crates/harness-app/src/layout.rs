@@ -21,6 +21,7 @@ use crate::{load_img_texture, App, View};
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events(ctx);
+        self.drain_swarm(ctx);
         self.absorb_mcp();
         self.pump_online_search();
         self.pump_directory();
@@ -112,6 +113,7 @@ impl eframe::App for App {
             RightTab::Files => "files",
             RightTab::Preview => "preview",
             RightTab::Plugins => "plugins",
+            RightTab::Members => "members",
         };
         if tab_now != self.config.right_panel_tab.trim() {
             self.config.right_panel_tab = tab_now.into();
@@ -182,10 +184,12 @@ impl eframe::App for App {
             self.handle_sidebar(action);
         }
 
-        // Right-hand panel: one box, three tabs — the file tree, the artifact
-        // preview of whatever is being built, and the curated plugin browser.
+        // Right-hand panel: one box, four tabs — the file tree, the artifact
+        // preview of whatever is being built, the curated plugin browser, and
+        // the Members crew.
         if self.right_panel {
             let mut close_right = false;
+            let mut swarm_action = None;
             let mut clicked_add: Option<(String, String)> = None;
             let mut clicked_file: Option<std::path::PathBuf> = None;
             let configured: Vec<String> = self.plugins.mcp.keys().cloned().collect();
@@ -201,6 +205,7 @@ impl eframe::App for App {
                         ui.selectable_value(&mut tab, RightTab::Files, "📁 Files");
                         ui.selectable_value(&mut tab, RightTab::Preview, "🖼 Preview");
                         ui.selectable_value(&mut tab, RightTab::Plugins, "🔌 Plugins");
+                        ui.selectable_value(&mut tab, RightTab::Members, "👥 Members");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.small_button("✕").on_hover_text("Hide the panel — bring it back with the Right panel toggle at the top or Ctrl+B").clicked() {
                                 close_right = true;
@@ -258,6 +263,9 @@ impl eframe::App for App {
                                 }
                             });
                         }
+                        RightTab::Members => {
+                            swarm_action = ui::members::show(ui, &self.swarm, &mut self.crew_task);
+                        }
                     }
                 });
             self.right_tab = tab;
@@ -281,6 +289,11 @@ impl eframe::App for App {
             }
             if let Some((n, l)) = clicked_add {
                 self.add_mcp_server(&n, &l);
+            }
+            match swarm_action {
+                Some(ui::members::SwarmAction::Run) => self.run_swarm(ctx),
+                Some(ui::members::SwarmAction::Stop) => self.swarm.reset(),
+                None => {}
             }
         }
 
@@ -312,14 +325,23 @@ impl eframe::App for App {
                 }
                 if let Some(err) = &self.error {
                     let mut dismiss = false;
+                    let mut resume = false;
+                    let capped = harness_core::agent::is_round_cap_message(err);
                     ui.horizontal(|ui| {
                         ui.colored_label(theme::danger(), err);
+                        if capped && ui.small_button("Continue").clicked() {
+                            resume = true;
+                        }
                         if ui.small_button("✕").on_hover_text("Dismiss").clicked() {
                             dismiss = true;
                         }
                     });
                     if dismiss {
                         self.error = None;
+                    }
+                    if resume {
+                        self.draft = "continue".into();
+                        self.send(ctx);
                     }
                 }
                 ui.add_space(4.0);

@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use crate::provider::TransportClass;
 use crate::error::{Error, Result};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -394,20 +395,20 @@ pub fn stream_chat(
     // path stays the default for the openapi-compatible 90%.
     if let Some(model) = opts.model_name.as_deref() {
         let base_url = opts.base_url.clone();
-        let family = crate::provider::provider_family(model);
-        if family == "anthropic" || model.starts_with("claude/") {
-            return crate::provider::stream_anthropic(
-                http, api_key, base_url.as_deref(), messages, opts,
-            );
-        }
-        if family == "google" || model.starts_with("gemini/") {
-            return crate::provider::stream_google(
-                http, api_key, base_url.as_deref(), messages, opts,
-            );
+        match crate::provider::detect_provider_kind(model) {
+            TransportClass::Anthropic => {
+                return crate::provider::stream_anthropic(
+                    http, api_key, base_url.as_deref(), messages, opts,
+                );
+            }
+            TransportClass::Google => {
+                return crate::provider::stream_google(
+                    http, api_key, base_url.as_deref(), messages, opts,
+                );
+            }
+            TransportClass::OpenAiCompatible => {}
         }
     }
-    // re-bind opts if not moved (it wasn't moved in the non-delegating path) 
-    let _ = &opts;
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<StreamEvent>>(256);
     let api_key = api_key.to_string();
     tokio::spawn(async move {

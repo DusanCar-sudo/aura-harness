@@ -78,7 +78,7 @@ pub const KNOWN_PROVIDERS: &[ProviderDescriptor] = &[
     ProviderDescriptor {
         family: "anthropic",
         display_name: "Anthropic Claude",
-        prefixes: &["anthropic/"],
+        prefixes: &["anthropic/", "claude/"],
         bare_prefixes: &["claude-"],
         api_key_env: &["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"],
         transport: TransportClass::Anthropic,
@@ -548,6 +548,7 @@ mod tests {
     fn transports_are_selected() {
         assert_eq!(detect_provider_kind("claude-sonnet-4"), TransportClass::Anthropic);
         assert_eq!(detect_provider_kind("gemini-2.5-pro"), TransportClass::Google);
+        assert_eq!(detect_provider_kind("claude/sonnet"), TransportClass::Anthropic);
         assert_eq!(detect_provider_kind("gpt-4o"), TransportClass::OpenAiCompatible);
         assert_eq!(detect_provider_kind("openrouter/x"), TransportClass::OpenAiCompatible);
     }

@@ -120,23 +120,45 @@ pub fn show(ui: &mut Ui, state: &SidebarState<'_>) -> Option<SidebarAction> {
 
     let mut pick = state.theme;
     ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
+        // Solid footer strip: with a wallpaper live the panel is alpha-blended,
+        // which left these controls readable only as a dark overlay. One opaque
+        // backing rect makes the footer a real bar in every theme.
+        let footer = ui.max_rect();
+        ui.painter()
+            .rect_filled(footer, 0.0, theme::palette_for(state.theme).panel);
         // Line the footer up with the composer's Attach/Mic/Model/Effort row
         // instead of gluing it to the window edge.
         ui.add_space(28.0);
         ui.spacing_mut().interact_size.y = 26.0;
-        ui.horizontal_wrapped(|ui| {
-            if ui.add_sized([82.0, 26.0], egui::Button::new("Settings")).clicked() {
+        // Two solid icon buttons on one row, matched halves. The old full-width
+        // text rows blended into the panel at every width; the explicit fill
+        // keeps them opaque over the wallpaper too.
+        let half = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+        ui.horizontal(|ui| {
+            let gear = egui::Button::new(RichText::new("⚙").size(15.0))
+                .fill(theme::card())
+                .min_size(egui::vec2(half, 26.0));
+            if ui
+                .add(gear)
+                .on_hover_text("Settings · providers, keys, model, voice")
+                .clicked()
+            {
                 action = Some(SidebarAction::OpenSettings);
             }
-            // Theme sits next to Settings, at the same control height.
-            egui::ComboBox::from_id_salt("sidebar-theme")
-                .selected_text(format!("Theme: {}", state.theme.label()))
-                .width(150.0)
+            ui.style_mut().visuals.widgets.inactive.bg_fill = theme::card();
+            ui.style_mut().visuals.widgets.inactive.weak_bg_fill = theme::card();
+            let palette = egui::ComboBox::from_id_salt("sidebar-theme")
+                .selected_text(RichText::new("🎨").size(15.0))
+                .width(half)
                 .show_ui(ui, |ui| {
                     for choice in ThemeChoice::all() {
                         ui.selectable_value(&mut pick, choice, choice.label());
                     }
                 });
+            palette.response.on_hover_text(format!(
+                "Theme · {}",
+                state.theme.label()
+            ));
         });
         ui.add_space(6.0);
         ui.separator();

@@ -3,6 +3,7 @@
 pub mod chat;
 pub mod filetree;
 pub mod input;
+pub mod members;
 pub mod model_factory;
 pub mod palette;
 pub mod plugin_browser;
@@ -82,6 +83,7 @@ pub enum RightTab {
     Files,
     Preview,
     Plugins,
+    Members,
 }
 
 /// A tool call rendered in the transcript, with its result once it lands.

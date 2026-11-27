@@ -60,6 +60,13 @@ impl ToolRegistry {
         self.cwd = cwd.as_ref().to_path_buf();
     }
 
+    /// Widen or narrow tool gating on an already-populated registry. Rebuilding
+    /// with `from_plugins` instead would drop the MCP tools registered into it
+    /// after the servers connected.
+    pub fn set_auto_approve(&mut self, on: bool) {
+        self.auto_approve = on;
+    }
+
     pub fn cwd(&self) -> &Path {
         &self.cwd
     }

@@ -127,6 +127,11 @@ pub(crate) struct App {
     pub(crate) rename_buf: String,
     pub(crate) right_panel: bool,
     pub(crate) right_tab: RightTab,
+    /// The Members crew: parallel agent loops over one task.
+    pub(crate) swarm: ui::members::Swarm,
+    /// The task typed in the Members panel. Kept out of the composer so a
+    /// crew run never competes with an open chat.
+    pub(crate) crew_task: String,
     pub(crate) file_tree: ui::filetree::FileTreeState,
     pub(crate) preview: ui::preview::PreviewState,
     pub(crate) catalog_query: String,
@@ -177,6 +182,7 @@ impl App {
         let right_tab = match config.right_panel_tab.trim() {
             "preview" => RightTab::Preview,
             "plugins" => RightTab::Plugins,
+            "members" => RightTab::Members,
             _ => RightTab::Files,
         };
         theme::apply(&cc.egui_ctx, config.theme);
@@ -253,6 +259,8 @@ impl App {
             rename_buf: String::new(),
             right_panel: true,
             right_tab,
+            swarm: ui::members::Swarm::new(),
+            crew_task: String::new(),
             file_tree: ui::filetree::FileTreeState::new(if project_root.is_empty() {
                 std::path::PathBuf::from(".")
             } else {
@@ -918,6 +926,86 @@ impl App {
         ctx.request_repaint();
     }
 
+    /// Run the crew on the task typed in the Members panel.
+    ///
+    /// Scratch work only: the session, the transcript and the composer draft are
+    /// left exactly as they were, so a crew run never disturbs an open chat.
+    fn run_swarm(&mut self, ctx: &egui::Context) {
+        let task = self.crew_task.trim().to_string();
+        if task.is_empty() {
+            return;
+        }
+        // Same provider routing as `send`: the selected model's key first,
+        // then the stored one.
+        let resolved_key = if !self.config.model_id.trim().is_empty() {
+            harness_core::provider::get_api_key_for_model(self.config.model_id.trim())
+        } else {
+            self.api_key.clone()
+        };
+        let Some(key) = resolved_key else {
+            self.error = Some(
+                "add an API key for your selected model in Settings (or set AURA_HOME / env vars)"
+                    .into(),
+            );
+            self.view = View::Settings;
+            return;
+        };
+        let base_url = if !self.config.model_id.trim().is_empty() {
+            harness_core::provider::base_url_for(self.config.model_id.trim())
+        } else {
+            None
+        };
+        let project_dir = absolute_dir(&self.file_tree.root);
+        let base_system = system_message(&self.config.system_prompt, &project_dir);
+        let opts = ChatOptions {
+            model: if self.config.model_id.trim().is_empty() {
+                Some(self.model.into())
+            } else {
+                None
+            },
+            model_name: if self.config.model_id.trim().is_empty() {
+                None
+            } else {
+                Some(self.config.model_id.trim().to_string())
+            },
+            base_url,
+            effort: Some(self.effort.into()),
+            ..Default::default()
+        };
+        // Full tool access for the whole crew. Flipped on the clone rather than
+        // by rebuilding from `self.plugins`: a rebuild would drop the MCP tools
+        // registered into `self.registry` after the servers connected.
+        let mut registry = self.registry.clone();
+        registry.set_auto_approve(true);
+        if project_dir_is_usable(&project_dir) {
+            registry.set_cwd(&project_dir);
+        }
+
+        let crew = Crew {
+            http: self.http.clone(),
+            api_key: key,
+            opts,
+            registry,
+            mcp: Arc::clone(&self.mcp),
+            base_system,
+            task,
+            standing: ui::members::load_standings(),
+        };
+
+        self.error = None;
+        let (tx, rx) = tokio::sync::mpsc::channel(256);
+        self.swarm.start(rx);
+        self.rt.spawn(orchestrate(crew, tx));
+        ctx.request_repaint();
+    }
+
+    /// Poll the crew, and keep repainting while the orchestration is live.
+    fn drain_swarm(&mut self, ctx: &egui::Context) {
+        if self.swarm.drain() {
+            ctx.request_repaint();
+        }
+    }
+
     /// Abort the in-flight turn: dropping the channels unwinds the agent loop.
     /// Whatever has already streamed is saved as a partial assistant message
     /// in the conversation it belongs to — stopping should not erase the work.
@@ -1231,6 +1319,163 @@ impl App {
 }
 
 
+/// The crew's shared plumbing, cloned once per agent turn.
+#[derive(Clone)]
+struct Crew {
+    http: reqwest::Client,
+    api_key: String,
+    opts: ChatOptions,
+    registry: ToolRegistry,
+    mcp: Arc<Mutex<BTreeMap<String, McpConnection>>>,
+    base_system: String,
+    task: String,
+    /// Reward records as they stood when this run started.
+    standing: ui::members::Standings,
+}
+
+impl Crew {
+    /// One agent turn, streamed to the panel as member `who`. Returns the answer.
+    async fn turn(
+        &self,
+        who: usize,
+        system: String,
+        user: String,
+        tx: &tokio::sync::mpsc::Sender<ui::members::CrewEvent>,
+    ) -> String {
+        // The registry already runs in full-access mode, so nothing waits on an
+        // approval. The sender is closed rather than held open so a stray gated
+        // tool degrades to a refusal instead of stalling the crew forever.
+        let (appr_tx, appr_rx) = agent::approval_channel();
+        drop(appr_tx);
+        let input = LoopInput {
+            http: self.http.clone(),
+            api_key: self.api_key.clone(),
+            history: vec![Message::system(system), Message::user(user)],
+            opts: self.opts.clone(),
+            registry: self.registry.clone(),
+            mcp: Arc::clone(&self.mcp),
+            approvals: appr_rx,
+        };
+        let (loop_tx, mut loop_rx) = tokio::sync::mpsc::channel::<LoopEvent>(256);
+        let handle = tokio::spawn(async move {
+            let _ = agent::run(input, loop_tx).await;
+        });
+
+        let mut answer = String::new();
+        while let Some(event) = loop_rx.recv().await {
+            if let LoopEvent::Content(text) = &event {
+                answer.push_str(text);
+            }
+            if !emit(tx, ui::members::CrewEvent::Member(who, event)).await {
+                break;
+            }
+        }
+        handle.abort();
+        answer
+    }
+}
+
+/// Send to the panel, and report whether it is still there. False means Stop was
+/// pressed or the app closed, and the orchestration should unwind.
+async fn emit(
+    tx: &tokio::sync::mpsc::Sender<ui::members::CrewEvent>,
+    event: ui::members::CrewEvent,
+) -> bool {
+    tx.send(event).await.is_ok()
+}
+
+/// Plan, dispatch, run and review one crew task.
+///
+/// The orchestrator owns the subagents: it writes each analyst's job before any
+/// of them start, and scores them afterwards. The analysts never see each other,
+/// only the job they were handed.
+async fn orchestrate(crew: Crew, tx: tokio::sync::mpsc::Sender<ui::members::CrewEvent>) {
+    use ui::members::{CrewEvent, Phase, ANALYSTS};
+
+    if !emit(&tx, CrewEvent::Phase(Phase::Planning)).await {
+        return;
+    }
+    let plan = crew
+        .turn(
+            0,
+            ui::members::plan_prompt(&crew.base_system),
+            crew.task.clone(),
+            &tx,
+        )
+        .await;
+    let jobs = ui::members::parse_plan(&plan);
+
+    if !emit(&tx, CrewEvent::Phase(Phase::Dispatched)).await {
+        return;
+    }
+    // Dropping the JoinSet aborts what is still in it, so an early return here
+    // stops the analysts rather than leaving them running unseen.
+    let mut dispatched = tokio::task::JoinSet::new();
+    for (i, (role, _)) in ANALYSTS.iter().enumerate() {
+        let who = i + 1;
+        // shortcut: an unparseable plan leaves `jobs` empty and every analyst
+        // gets the same generic job; tighten when a real model keeps missing the
+        // `role: job` format.
+        let job = jobs
+            .get(role)
+            .cloned()
+            .unwrap_or_else(|| "Answer the overall task from your own role.".to_string());
+        if !emit(&tx, CrewEvent::Assign(who, job.clone())).await {
+            return;
+        }
+        let system = ui::members::analyst_prompt(&crew.base_system, role, &crew.standing);
+        let user = format!(
+            "Overall task: {}\n\nYour job from the orchestrator: {}",
+            crew.task, job
+        );
+        let (crew, tx) = (crew.clone(), tx.clone());
+        dispatched.spawn(async move { (who, crew.turn(who, system, user, &tx).await) });
+    }
+
+    let mut reports = Vec::new();
+    while let Some(done) = dispatched.join_next().await {
+        if let Ok((who, answer)) = done {
+            reports.push((who, answer));
+        }
+    }
+    // Analysts finish in whatever order they finish; the report reads in row order.
+    reports.sort_by_key(|(who, _)| *who);
+
+    if !emit(&tx, CrewEvent::Phase(Phase::Reviewing)).await {
+        return;
+    }
+    let report = reports
+        .iter()
+        .map(|(who, answer)| format!("## {}\n{}", ANALYSTS[who - 1].0, answer))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let review = crew
+        .turn(
+            0,
+            ui::members::review_prompt(&crew.base_system),
+            format!("Task: {}\n\n{}", crew.task, report),
+            &tx,
+        )
+        .await;
+
+    // The verdict is the orchestrator's own row, already streamed to the panel;
+    // only the scores need pulling out of it.
+    let (scores, _) = ui::members::parse_review(&review);
+    for (role, score, reason) in &scores {
+        let Some(who) = ANALYSTS
+            .iter()
+            .position(|(name, _)| name == role)
+            .map(|i| i + 1)
+        else {
+            continue;
+        };
+        let _ = emit(&tx, CrewEvent::Score(who, *score, reason.clone())).await;
+    }
+    // The reward program: scores outlive this run and change the next one.
+    ui::members::record(&scores);
+    let _ = emit(&tx, CrewEvent::Phase(Phase::Done)).await;
+}
+
 /// The project folder as an absolute path (the file tree starts at "." when none is set).
 fn absolute_dir(root: &std::path::Path) -> std::path::PathBuf {
     root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
@@ -1242,20 +1487,30 @@ fn project_dir_is_usable(dir: &std::path::Path) -> bool {
     dir.is_dir()
 }
 
+const BASE_SYSTEM: &str = "\
+Before delivering completed work, confirm with the user that the results meet \
+their needs. For complex or creative tasks, provide progress updates and ask \
+for feedback along the way. Never finish without summarizing what was done \
+and asking if the user wants adjustments.";
+
 /// The user's system prompt plus where the tools run, so the model does not
-/// spend tool rounds exploring to find the project. Empty when there is
-/// neither a prompt nor a usable folder.
+/// spend tool rounds exploring to find the project.
 pub(crate) fn system_message(prompt: &str, root: &std::path::Path) -> String {
     if !project_dir_is_usable(root) {
-        return prompt.trim().to_string();
+        let trimmed = prompt.trim();
+        if trimmed.is_empty() {
+            return BASE_SYSTEM.to_string();
+        }
+        return trimmed.to_string();
     }
     let note = format!(
-        "Working directory: {}. The shell starts there and relative file paths resolve against it. \
+        "{}\n\nWorking directory: {}. The shell starts there and relative file paths resolve against it. \
          A website's entry page should be index.html in that folder (or in dist/, out/ or \
          public/) so the Preview tab can show it.\n\n\
          Important instruction: When you use tools, after they execute you MUST always provide a \
          final response summarizing the outcome or answering the user directly. Never end your turn \
          with an empty response.",
+        BASE_SYSTEM,
         absolute_dir(root).display()
     );
     match prompt.trim() {
@@ -1490,9 +1745,10 @@ mod tests {
         assert!(with_prompt.contains(abs), "{with_prompt}");
         assert!(with_prompt.contains("index.html"), "{with_prompt}");
 
-        // No user prompt: the folder note still goes out, with no leading blank lines.
+        // No user prompt: the built-in base instruction + folder note go out.
         let bare = system_message("", &dir);
-        assert!(bare.starts_with("Working directory:"), "{bare}");
+        assert!(bare.starts_with(BASE_SYSTEM), "{bare}");
+        assert!(bare.contains("Working directory:"), "{bare}");
 
         // The empty-project-root default "." must become a real path the model can use.
         let dot = system_message("", std::path::Path::new("."));
@@ -1504,7 +1760,7 @@ mod tests {
         let gone = std::env::temp_dir().join("aura-harness-no-such-folder");
         // A stale saved project_root must not be promised to the model as the working directory.
         assert_eq!(system_message("be brief", &gone), "be brief");
-        assert_eq!(system_message("", &gone), "");
+        assert_eq!(system_message("", &gone), BASE_SYSTEM);
         assert!(!project_dir_is_usable(&gone));
         assert!(project_dir_is_usable(&std::env::temp_dir()));
     }
