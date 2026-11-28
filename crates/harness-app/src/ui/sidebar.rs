@@ -13,6 +13,7 @@ pub enum SidebarAction {
     Delete(String),
     RenameRequest(String),
     OpenSettings,
+    OpenPlugins,
     /// Switch theme from the sidebar picker.
     Theme(ThemeChoice),
 }
@@ -70,6 +71,94 @@ pub fn show(ui: &mut Ui, state: &SidebarState<'_>) -> Option<SidebarAction> {
     ui.add_space(6.0);
     ui.separator();
 
+    // Pin the footer BEFORE the scroll area so a long session list can never
+    // overlap Settings, Theme, or the plugin status strip.
+    let mut pick = state.theme;
+    let footer_frame = egui::Frame::none()
+        .fill(theme::palette_for(state.theme).panel)
+        .inner_margin(egui::Margin {
+            left: 0.0,
+            right: 0.0,
+            top: 4.0,
+            bottom: 8.0,
+        });
+    egui::TopBottomPanel::bottom("sidebar-footer")
+        .show_separator_line(false)
+        .frame(footer_frame)
+        .show_inside(ui, |ui| {
+            ui.separator();
+            let color = if state.plugin_ok {
+                theme::dim()
+            } else {
+                theme::warn()
+            };
+            if ui
+                .add(
+                    egui::Button::new(RichText::new(state.plugin_status).color(color).small())
+                        .frame(false),
+                )
+                .on_hover_text("Open Plugins & MCP servers")
+                .clicked()
+            {
+                action = Some(SidebarAction::OpenPlugins);
+            }
+            ui.add_space(4.0);
+            ui.spacing_mut().interact_size.y = 26.0;
+            let half = ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(76.0);
+            ui.horizontal(|ui| {
+                let settings_btn = egui::Button::new(RichText::new("Settings").size(12.5))
+                    .fill(theme::card())
+                    .min_size(egui::vec2(half, 26.0));
+                if ui
+                    .add(settings_btn)
+                    .on_hover_text("Settings · providers, keys, model, agents, plugins")
+                    .clicked()
+                {
+                    action = Some(SidebarAction::OpenSettings);
+                }
+                ui.style_mut().visuals.widgets.inactive.bg_fill = theme::card();
+                ui.style_mut().visuals.widgets.inactive.weak_bg_fill = theme::card();
+                let current_label = match state.theme {
+                    ThemeChoice::Nature => "Nature",
+                    ThemeChoice::ChatGpt => "ChatGPT",
+                    _ => state.theme.label(),
+                };
+                let palette = egui::ComboBox::from_id_salt("sidebar-theme")
+                    .selected_text(RichText::new(format!("Theme: {current_label}")).size(12.0))
+                    .width(half)
+                    .show_ui(ui, |ui| {
+                        ui.small(RichText::new("Dark themes").color(theme::dim()));
+                        for choice in ThemeChoice::all().into_iter().filter(|t| t.is_dark()) {
+                            let pal = theme::palette_for(choice);
+                            ui.horizontal(|ui| {
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(10.0, 10.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().rect_filled(rect, 2.0, pal.accent);
+                                ui.selectable_value(&mut pick, choice, choice.label());
+                            });
+                        }
+                        ui.separator();
+                        ui.small(RichText::new("Light themes").color(theme::dim()));
+                        for choice in ThemeChoice::all().into_iter().filter(|t| !t.is_dark()) {
+                            let pal = theme::palette_for(choice);
+                            ui.horizontal(|ui| {
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(10.0, 10.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().rect_filled(rect, 2.0, pal.accent);
+                                ui.selectable_value(&mut pick, choice, choice.label());
+                            });
+                        }
+                    });
+                palette
+                    .response
+                    .on_hover_text(format!("Theme · {}", state.theme.label()));
+            });
+        });
+
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -84,7 +173,7 @@ pub fn show(ui: &mut Ui, state: &SidebarState<'_>) -> Option<SidebarAction> {
                 ui.horizontal(|ui| {
                     let lbl = ui
                         .selectable_label(selected, label)
-                        .on_hover_text("Click to open · double-click or ✎ to rename");
+                        .on_hover_text("Click to open · double-click or ren to rename");
                     // Double-click wins over the single-click open.
                     if lbl.double_clicked() {
                         action = Some(SidebarAction::RenameRequest(header.id.clone()));
@@ -115,7 +204,7 @@ pub fn show(ui: &mut Ui, state: &SidebarState<'_>) -> Option<SidebarAction> {
                             action = Some(SidebarAction::Delete(header.id.clone()));
                         }
                         if ui
-                            .small_button(RichText::new("✎").color(theme::dim()))
+                            .small_button(RichText::new("ren").color(theme::dim()))
                             .on_hover_text("Rename conversation")
                             .clicked()
                         {
@@ -125,57 +214,6 @@ pub fn show(ui: &mut Ui, state: &SidebarState<'_>) -> Option<SidebarAction> {
                 });
             }
         });
-
-    let mut pick = state.theme;
-    ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
-        // Solid footer strip: with a wallpaper live the panel is alpha-blended,
-        // which left these controls readable only as a dark overlay. One opaque
-        // backing rect makes the footer a real bar in every theme.
-        let footer = ui.max_rect();
-        ui.painter()
-            .rect_filled(footer, 0.0, theme::palette_for(state.theme).panel);
-        // Line the footer up with the composer's Attach/Mic/Model/Effort row
-        // instead of gluing it to the window edge.
-        ui.add_space(28.0);
-        ui.spacing_mut().interact_size.y = 26.0;
-        // Two solid icon buttons on one row, matched halves. The old full-width
-        // text rows blended into the panel at every width; the explicit fill
-        // keeps them opaque over the wallpaper too.
-        let half = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-        ui.horizontal(|ui| {
-            let gear = egui::Button::new(RichText::new("⚙").size(15.0))
-                .fill(theme::card())
-                .min_size(egui::vec2(half, 26.0));
-            if ui
-                .add(gear)
-                .on_hover_text("Settings · providers, keys, model, voice")
-                .clicked()
-            {
-                action = Some(SidebarAction::OpenSettings);
-            }
-            ui.style_mut().visuals.widgets.inactive.bg_fill = theme::card();
-            ui.style_mut().visuals.widgets.inactive.weak_bg_fill = theme::card();
-            let palette = egui::ComboBox::from_id_salt("sidebar-theme")
-                .selected_text(RichText::new("🎨").size(15.0))
-                .width(half)
-                .show_ui(ui, |ui| {
-                    for choice in ThemeChoice::all() {
-                        ui.selectable_value(&mut pick, choice, choice.label());
-                    }
-                });
-            palette
-                .response
-                .on_hover_text(format!("Theme · {}", state.theme.label()));
-        });
-        ui.add_space(6.0);
-        ui.separator();
-        let color = if state.plugin_ok {
-            theme::dim()
-        } else {
-            theme::warn()
-        };
-        ui.label(RichText::new(state.plugin_status).color(color).small());
-    });
 
     if pick != state.theme {
         action = Some(SidebarAction::Theme(pick));

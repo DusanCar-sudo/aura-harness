@@ -62,6 +62,7 @@ async fn a_turn_calls_a_tool_and_answers_from_its_output() {
         registry,
         mcp: Arc::new(Mutex::new(Default::default())),
         approvals: appr_rx,
+        subagent: None,
     };
     let (tx, mut rx) = tokio::sync::mpsc::channel(256);
     tokio::spawn(async move {

@@ -153,8 +153,8 @@ mod tests {
             },
         );
         let reg = from_plugins(&plugins, false);
-        // 7 built-ins are always present, plus the one enabled command tool.
-        assert_eq!(reg.len(), 8);
+        // 9 built-ins are always present, plus the one enabled command tool.
+        assert_eq!(reg.len(), 10);
         assert!(reg.get("cmd_echo").is_ok());
         assert!(reg.get("shell").is_ok());
         assert!(matches!(

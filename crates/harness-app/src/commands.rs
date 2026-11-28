@@ -1125,7 +1125,6 @@ impl App {
         match choice {
             Some(choice) => {
                 self.config.theme = choice;
-                self.applied_theme = choice;
                 if let Err(e) = self.config.save() {
                     self.note_error("Could not save the theme", vec![e.to_string()]);
                 } else {

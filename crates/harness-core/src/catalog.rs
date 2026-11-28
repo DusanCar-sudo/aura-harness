@@ -46,6 +46,11 @@ pub fn entries() -> &'static [CatalogEntry] {
         entry("filesystem", "Read and write files (append allowed dirs)", "npx -y @modelcontextprotocol/server-filesystem", "core", "files directories io storage", false, true),
         entry("git", "Read and manipulate a git repo (append path)", "npx -y @modelcontextprotocol/server-git", "core", "git version control repo github", false, true),
         entry("puppeteer", "Drive headless browser: screenshots clicks navigation", "npx -y @modelcontextprotocol/server-puppeteer", "web", "browser screenshot scrape click navigation web automation", false, false),
+        entry("playwright", "Fast headless browser automation: tabs click DOM screenshots", "npx -y @playwright/mcp@latest", "web", "browser playwright chrome screenshot dom automation test", false, false),
+        entry("aura-chrome", "Drive your logged-in Chrome tabs directly via extension bridge", "node /mnt/bigdata/aura-chrome/bridge/server.mjs", "web", "chrome browser aura extension tab screenshot click dom", false, false),
+        entry("context7", "Up-to-date framework & library documentation lookup", "npx -y @upstash/context7-mcp", "coding", "docs documentation sdk api library context7 react rust", false, false),
+        entry("exa", "Live semantic web search & deep extraction", "npx -y exa-mcp-server", "research", "exa search ai web research scrape semantic", true, false),
+        entry("sqlite", "Query local SQLite databases via SQL", "uvx mcp-server-sqlite", "data", "sqlite sql db database local query", false, true),
         entry("brave-search", "Web search via the Brave API", "npx -y @modelcontextprotocol/server-brave-search", "research", "search web google bing brave research", true, false),
         entry("github", "GitHub issues PRs and code", "npx -y @modelcontextprotocol/server-github", "coding", "github version control issues pull requests code", true, false),
         entry("postgres", "Query a Postgres database", "npx -y @modelcontextprotocol/server-postgres", "data", "postgres sql database query data", false, true),
@@ -83,7 +88,7 @@ pub fn entries() -> &'static [CatalogEntry] {
 }
 
 pub fn categories() -> &'static [&'static str] {
-    &["core", "gaming", "social", "productivity", "storage", "coding", "research", "web", "data", "web3"]
+    &["core", "web", "memory", "coding", "research", "data", "gaming", "social", "productivity", "storage", "web3"]
 }
 
 /// Normalize text for matching — lowercase, split on non-alphanumeric, ASCII.
@@ -91,37 +96,80 @@ fn normalize(text: &str) -> String {
     text.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { ' ' }).collect()
 }
 
-/// Tokenized keyword matching with category-aware boosting. Empty query lists
-/// everything. Genuinely semantic enough for "gaming", "3d game", "social media",
-/// "summertime" style queries.
+/// Tokenized, ranked keyword search (`len >= 2` tokens supported, e.g. "db",
+/// "s3", "ai", "3d"). Empty query returns everything in catalog order.
 pub fn search(query: &str) -> Vec<&'static CatalogEntry> {
-    let q = query.trim().to_lowercase();
-    if q.is_empty() {
-        return entries().iter().collect();
-    }
-    // Expand query into individual tokens; full phrase also tested.
-    let tokens: Vec<&str> = q.split_whitespace().collect();
-    entries()
+    search_filtered(query, None)
+}
+
+/// Search catalog optionally constrained to one category tab.
+pub fn search_filtered(query: &str, category: Option<&str>) -> Vec<&'static CatalogEntry> {
+    let cat_filter = category.map(str::trim).filter(|c| !c.is_empty() && *c != "all");
+    let pool: Vec<&'static CatalogEntry> = entries()
         .iter()
-        .filter(|e| {
-            // Match if name/description/category/tags contains the FULL phrase (spacing-insensitive)
-            let haystack = format!("{} {} {} {}", e.name, e.description, e.category, e.tags);
-            let normalized = normalize(&haystack);
-            // Whole-phrase
-            if normalized.contains(&q) { return true; }
-            // Tokens overlap: at least one query token must be present.
-            if tokens.iter().all(|t| t.len() < 3) { return false; }
-            for t in &tokens {
-                if t.len() < 3 { continue; }
-                // Stem-lite: match if haystack contains token, or haystack token starts with token
-                if normalized.contains(t) { return true; }
-                // Common expansions
-                let expanded = map_alias(t);
-                if normalized.contains(expanded) { return true; }
+        .filter(|e| cat_filter.is_none_or(|c| e.category == c))
+        .collect();
+
+    let q = normalize(query);
+    let q = q.trim();
+    if q.is_empty() {
+        return pool;
+    }
+    let tokens: Vec<&str> = q.split_whitespace().collect();
+    if tokens.iter().all(|t| t.len() < 2) {
+        return Vec::new();
+    }
+
+    let mut scored: Vec<(i32, usize, &'static CatalogEntry)> = pool
+        .into_iter()
+        .enumerate()
+        .filter_map(|(idx, e)| {
+            let name_norm = normalize(e.name);
+            let desc_norm = normalize(e.description);
+            let cat_norm = normalize(e.category);
+            let tags_norm = normalize(e.tags);
+            let full = format!("{name_norm} {desc_norm} {cat_norm} {tags_norm}");
+
+            let mut score = 0i32;
+            if name_norm == q {
+                score += 120;
+            } else if name_norm.starts_with(q) {
+                score += 70;
+            } else if name_norm.contains(q) {
+                score += 45;
             }
-            false
+            if desc_norm.contains(q) || tags_norm.contains(q) {
+                score += 25;
+            }
+
+            let mut token_hits = 0i32;
+            for t in &tokens {
+                if t.len() < 2 {
+                    continue;
+                }
+                let expanded = map_alias(t);
+                let hit_name = name_norm.contains(t) || name_norm.contains(expanded);
+                let hit_elsewhere = full.contains(t) || full.contains(expanded);
+                if hit_name {
+                    score += 20;
+                    token_hits += 1;
+                } else if hit_elsewhere {
+                    score += 8;
+                    token_hits += 1;
+                }
+            }
+            if score == 0 || token_hits == 0 {
+                return None;
+            }
+            if !e.needs_key && !e.needs_args {
+                score += 2;
+            }
+            Some((score, idx, e))
         })
-        .collect()
+        .collect();
+
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    scored.into_iter().map(|(_, _, e)| e).collect()
 }
 
 /// Map common user adjectives to their catalogue concept.
@@ -199,6 +247,11 @@ mod tests {
         // Empty query lists everything
         assert_eq!(search("").len(), entries().len());
         assert_eq!(search("   ").len(), entries().len());
+        // Short 2-char queries work and rank cleanly
+        assert!(search("s3").iter().any(|e| e.name == "s3"));
+        assert!(search("db").iter().any(|e| e.category == "data"));
+        assert!(search("chrome").iter().any(|e| e.name == "aura-chrome"));
+        assert!(!search_filtered("memory", Some("memory")).is_empty());
         // No match
         assert!(search("zzz-nothing").is_empty());
     }

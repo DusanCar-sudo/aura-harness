@@ -198,7 +198,7 @@ impl FileTreeState {
                 }
                 if is_dir {
                     let expanded = self.expanded.contains(&p);
-                    let icon = if expanded { "📂" } else { "📁" };
+                    let icon = if expanded { "▾" } else { "▸" };
                     if ui.button(format!("{} {}", icon, name)).clicked() {
                         if expanded {
                             self.expanded.remove(&p);
@@ -216,7 +216,7 @@ impl FileTreeState {
                     }
                 } else {
                     if ui
-                        .button(format!("📄 {}", name))
+                        .button(format!("  {}", name))
                         .on_hover_text(p.display().to_string())
                         .clicked()
                     {
@@ -224,7 +224,7 @@ impl FileTreeState {
                     }
                 }
                 if ui
-                    .small_button("📋")
+                    .small_button("copy")
                     .on_hover_text("Copy full path to clipboard")
                     .clicked()
                 {

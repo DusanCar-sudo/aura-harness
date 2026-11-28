@@ -16,7 +16,40 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::config::load_api_key_named;
+use crate::config::{load_api_key_named, CustomProvider};
+
+/// Logical category used to organize providers in the Model Factory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderGroup {
+    Direct,
+    CodingPlan,
+    Cloud,
+    Local,
+}
+
+impl ProviderGroup {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Direct => "Direct Flagship APIs",
+            Self::CodingPlan => "Coding Plans & Subscriptions",
+            Self::Cloud => "Cloud Gateways & Inference",
+            Self::Local => "Local Servers",
+        }
+    }
+}
+
+/// Billing/routing plan preset for a provider — selecting one fills the right
+/// endpoint, env var names, and routing prefix automatically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderPlan {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub desc: &'static str,
+    pub base_url: &'static str,
+    pub api_key_env: &'static str,
+    pub base_url_env: &'static str,
+    pub prefix: &'static str,
+}
 
 /// One selectable provider in the factory.
 #[derive(Debug, Clone, Copy)]
@@ -25,6 +58,7 @@ pub struct ProviderSpec {
     pub id: &'static str,
     pub name: &'static str,
     pub desc: &'static str,
+    pub group: ProviderGroup,
     /// API-key env names in lookup order; empty for local servers.
     pub env_keys: &'static [&'static str],
     /// Default endpoint (no trailing slash).
@@ -67,171 +101,229 @@ const fn m(id: &'static str, name: &'static str, family: &'static str, speed: &'
 /// scheme, and offering a model that cannot be called is worse than leaving it
 /// out. All OpenAI-compatible providers are present.
 pub const PROVIDERS: &[ProviderSpec] = &[
-    // ── First-party & direct ───────────────────────────────────────────────
+    // ── Direct Flagship APIs ───────────────────────────────────────────────
     ProviderSpec {
-        id: "deepseek", name: "DeepSeek", desc: "V4.1 Flash, V4 Pro, Reasoner — direct API",
+        id: "deepseek", name: "DeepSeek", desc: "V4.1 Flash, V4 Pro, Reasoner — direct PAYG API",
+        group: ProviderGroup::Direct,
         env_keys: &["DEEPSEEK_API_KEY"], base_url: Some("https://api.deepseek.com/v1"),
         base_url_env: &["DEEPSEEK_BASE_URL"], prefix: "", live: true, local: false,
     },
     ProviderSpec {
-        id: "openrouter", name: "OpenRouter", desc: "Pay-per-use aggregator, free models available",
-        env_keys: &["OPENROUTER_API_KEY"], base_url: Some("https://openrouter.ai/api/v1"),
-        base_url_env: &["OPENROUTER_BASE_URL"], prefix: "openrouter/", live: true, local: false,
-    },
-    ProviderSpec {
-        id: "anthropic", name: "Anthropic", desc: "Claude models via API key",
+        id: "anthropic", name: "Anthropic", desc: "Claude Opus, Sonnet, Haiku — direct API",
+        group: ProviderGroup::Direct,
         env_keys: &["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"], base_url: Some("https://api.anthropic.com"),
         base_url_env: &["ANTHROPIC_BASE_URL"], prefix: "", live: true, local: false,
     },
     ProviderSpec {
-        id: "openai", name: "OpenAI", desc: "GPT models direct API",
+        id: "openai", name: "OpenAI", desc: "GPT & o-series direct PAYG API",
+        group: ProviderGroup::Direct,
         env_keys: &["OPENAI_API_KEY"], base_url: Some("https://api.openai.com/v1"),
         base_url_env: &["OPENAI_BASE_URL"], prefix: "", live: true, local: false,
     },
     ProviderSpec {
         id: "google", name: "Google AI Studio", desc: "Native Gemini API",
+        group: ProviderGroup::Direct,
         env_keys: &["GOOGLE_API_KEY", "GEMINI_API_KEY"], base_url: Some("https://generativelanguage.googleapis.com"),
         base_url_env: &["GOOGLE_BASE_URL", "GEMINI_BASE_URL"], prefix: "gemini/", live: true, local: false,
     },
     ProviderSpec {
         id: "xai", name: "xAI Grok", desc: "Grok models direct API",
+        group: ProviderGroup::Direct,
         env_keys: &["XAI_API_KEY"], base_url: Some("https://api.x.ai/v1"),
         base_url_env: &["XAI_BASE_URL"], prefix: "", live: true, local: false,
     },
-    // ── OpenAI-compatible clouds ───────────────────────────────────────────
+    // ── Coding Plans & Subscriptions ───────────────────────────────────────
     ProviderSpec {
-        id: "qwen", name: "Qwen Cloud / DashScope", desc: "Qwen + multi-provider",
+        id: "alibaba", name: "Alibaba Cloud Coding Plan", desc: "Dedicated coding tier (coding-intl gateway)",
+        group: ProviderGroup::CodingPlan,
+        env_keys: &["ALIBABA_API_KEY"],
+        base_url: Some("https://coding-intl.dashscope.aliyuncs.com/v1"),
+        base_url_env: &["ALIBABA_BASE_URL"], prefix: "alibaba/", live: true, local: false,
+    },
+    ProviderSpec {
+        id: "opencode-go", name: "OpenCode Go", desc: "$10/mo Coding Plan (zen/go gateway)",
+        group: ProviderGroup::CodingPlan,
+        env_keys: &["OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"],
+        base_url: Some("https://opencode.ai/zen/go/v1"),
+        base_url_env: &["OPENCODE_GO_BASE_URL"], prefix: "go-anthropic/", live: true, local: false,
+    },
+    ProviderSpec {
+        id: "zhipu", name: "Z.AI / GLM", desc: "Coding Plan (zhipu-coding/) & PAYG API",
+        group: ProviderGroup::CodingPlan,
+        env_keys: &["ZHIPU_API_KEY"], base_url: Some("https://api.z.ai/api/paas/v4"),
+        base_url_env: &["ZHIPU_BASE_URL"], prefix: "", live: true, local: false,
+    },
+    ProviderSpec {
+        id: "xiaomi", name: "Xiaomi MiMo", desc: "Token Plan (tp-) & PAYG (sk-) auto-routed",
+        group: ProviderGroup::CodingPlan,
+        env_keys: &["XIAOMI_API_KEY"], base_url: Some("https://api.xiaomimimo.com/v1"),
+        base_url_env: &["XIAOMI_BASE_URL"], prefix: "", live: true, local: false,
+    },
+    ProviderSpec {
+        id: "kimi", name: "Kimi / Moonshot", desc: "Kimi Coding Plan & Global/China PAYG",
+        group: ProviderGroup::CodingPlan,
+        env_keys: &["MOONSHOT_API_KEY", "KIMI_API_KEY"], base_url: Some("https://api.moonshot.ai/v1"),
+        base_url_env: &["MOONSHOT_BASE_URL", "KIMI_BASE_URL"], prefix: "kimi/", live: true, local: false,
+    },
+    ProviderSpec {
+        id: "minimax", name: "MiniMax", desc: "Global PAYG, Coding Plan & China endpoints",
+        group: ProviderGroup::CodingPlan,
+        env_keys: &["MINIMAX_API_KEY"], base_url: Some("https://api.minimax.io/v1"),
+        base_url_env: &["MINIMAX_BASE_URL"], prefix: "minimax/", live: true, local: false,
+    },
+    ProviderSpec {
+        id: "stepfun", name: "StepFun", desc: "Step Plan agent & coding models",
+        group: ProviderGroup::CodingPlan,
+        env_keys: &["STEPFUN_API_KEY"], base_url: Some("https://api.stepfun.com/v1"),
+        base_url_env: &["STEPFUN_BASE_URL"], prefix: "stepfun/", live: true, local: false,
+    },
+    // ── Cloud Gateways & Inference ─────────────────────────────────────────
+    ProviderSpec {
+        id: "openrouter", name: "OpenRouter", desc: "Pay-per-use aggregator, free models available",
+        group: ProviderGroup::Cloud,
+        env_keys: &["OPENROUTER_API_KEY"], base_url: Some("https://openrouter.ai/api/v1"),
+        base_url_env: &["OPENROUTER_BASE_URL"], prefix: "openrouter/", live: true, local: false,
+    },
+    ProviderSpec {
+        id: "opencode", name: "OpenCode Zen", desc: "Pay-as-you-go multi-model gateway",
+        group: ProviderGroup::Cloud,
+        env_keys: &["OPENCODE_API_KEY"], base_url: Some("https://opencode.ai/zen/v1"),
+        base_url_env: &["OPENCODE_BASE_URL"], prefix: "opencode/", live: true, local: false,
+    },
+    ProviderSpec {
+        id: "qwen", name: "Qwen Cloud / DashScope", desc: "Qwen PAYG API (Intl & China)",
+        group: ProviderGroup::Cloud,
         env_keys: &["DASHSCOPE_API_KEY", "QWEN_API_KEY"],
         base_url: Some("https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
         base_url_env: &["DASHSCOPE_BASE_URL", "QWEN_BASE_URL"], prefix: "qwen/", live: true, local: false,
     },
     ProviderSpec {
-        id: "minimax", name: "MiniMax", desc: "Global, Coding Plan & China",
-        env_keys: &["MINIMAX_API_KEY"], base_url: Some("https://api.minimax.io/v1"),
-        base_url_env: &["MINIMAX_BASE_URL"], prefix: "minimax/", live: true, local: false,
-    },
-    ProviderSpec {
-        id: "kimi", name: "Kimi / Moonshot", desc: "Coding Plan, global & China endpoints",
-        env_keys: &["MOONSHOT_API_KEY", "KIMI_API_KEY"], base_url: Some("https://api.moonshot.ai/v1"),
-        base_url_env: &["MOONSHOT_BASE_URL"], prefix: "kimi/", live: true, local: false,
-    },
-    ProviderSpec {
-        id: "zhipu", name: "Z.AI / GLM", desc: "Zhipu direct API; zhipu-coding/ for the Coding Plan",
-        env_keys: &["ZHIPU_API_KEY"], base_url: Some("https://api.z.ai/api/paas/v4"),
-        base_url_env: &["ZHIPU_BASE_URL"], prefix: "", live: true, local: false,
-    },
-    ProviderSpec {
-        id: "xiaomi", name: "Xiaomi MiMo", desc: "MiMo V2.5 and V2 models, ASR + TTS",
-        env_keys: &["XIAOMI_API_KEY"], base_url: Some("https://api.xiaomimimo.com/v1"),
-        base_url_env: &["XIAOMI_BASE_URL"], prefix: "", live: true, local: false,
-    },
-    ProviderSpec {
-        id: "groq", name: "Groq", desc: "Very fast inference + Whisper",
-        env_keys: &["GROQ_API_KEY"], base_url: Some("https://api.groq.com/openai/v1"),
-        base_url_env: &["GROQ_BASE_URL"], prefix: "groq/", live: true, local: false,
-    },
-    ProviderSpec {
         id: "nvidia", name: "NVIDIA NIM", desc: "Nemotron and open models via build.nvidia.com",
+        group: ProviderGroup::Cloud,
         env_keys: &["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY", "NIM_API_KEY"],
         base_url: Some("https://integrate.api.nvidia.com/v1"), base_url_env: &[], prefix: "nvidia/",
         live: true, local: false,
     },
     ProviderSpec {
+        id: "groq", name: "Groq", desc: "Ultra-fast LPU inference + Whisper",
+        group: ProviderGroup::Cloud,
+        env_keys: &["GROQ_API_KEY"], base_url: Some("https://api.groq.com/openai/v1"),
+        base_url_env: &["GROQ_BASE_URL"], prefix: "groq/", live: true, local: false,
+    },
+    ProviderSpec {
+        id: "inception", name: "Inception", desc: "Mercury diffusion LLMs (~1000 tok/s)",
+        group: ProviderGroup::Cloud,
+        env_keys: &["INCEPTION_API_KEY"], base_url: Some("https://api.inceptionlabs.ai/v1"),
+        base_url_env: &["INCEPTION_BASE_URL"], prefix: "inception/", live: true, local: false,
+    },
+    ProviderSpec {
+        id: "nebius", name: "Nebius AI Studio", desc: "Open models & fast inference",
+        group: ProviderGroup::Cloud,
+        env_keys: &["NEBIUS_API_KEY"], base_url: Some("https://api.studio.nebius.ai/v1"),
+        base_url_env: &["NEBIUS_BASE_URL"], prefix: "nebius/", live: true, local: false,
+    },
+    ProviderSpec {
         id: "fpt", name: "FPT Cloud AI", desc: "Marketplace: DeepSeek, GLM, Qwen, Gemma, GPT-OSS",
+        group: ProviderGroup::Cloud,
         env_keys: &["FPT_API_KEY"], base_url: Some("https://mkp-api.fptcloud.com/v1"),
         base_url_env: &["FPT_BASE_URL"], prefix: "fpt/", live: true, local: false,
     },
     ProviderSpec {
         id: "byteplus", name: "BytePlus ModelArk", desc: "DeepSeek V4 Flash/Pro GA, Seed, Kimi",
+        group: ProviderGroup::Cloud,
         env_keys: &["ARK_API_KEY"], base_url: Some("https://ark.ap-southeast.bytepluses.com/api/v3"),
         base_url_env: &["ARK_BASE_URL"], prefix: "byteplus/", live: true, local: false,
     },
     ProviderSpec {
         id: "huggingface", name: "Hugging Face", desc: "Inference Providers",
+        group: ProviderGroup::Cloud,
         env_keys: &["HUGGINGFACE_API_KEY", "HF_TOKEN"], base_url: Some("https://router.huggingface.co/v1"),
         base_url_env: &["HUGGINGFACE_BASE_URL"], prefix: "huggingface/", live: true, local: false,
     },
     ProviderSpec {
-        id: "opencode", name: "OpenCode Zen / Go", desc: "Pay-as-you-go and $10/month subscription",
-        env_keys: &["OPENCODE_API_KEY", "OPENCODE_GO_API_KEY"], base_url: Some("https://opencode.ai/zen/v1"),
-        base_url_env: &["OPENCODE_BASE_URL"], prefix: "opencode/", live: true, local: false,
-    },
-    ProviderSpec {
-        id: "stepfun", name: "StepFun", desc: "Agent / coding models",
-        env_keys: &["STEPFUN_API_KEY"], base_url: Some("https://api.stepfun.com/v1"),
-        base_url_env: &["STEPFUN_BASE_URL"], prefix: "stepfun/", live: true, local: false,
-    },
-    ProviderSpec {
-        id: "tencent", name: "Tencent TokenHub", desc: "Hunyuan and partner models",
-        env_keys: &["TENCENT_API_KEY"], base_url: Some("https://tokenhub.tencentmaas.com/v1"),
-        base_url_env: &["TENCENT_BASE_URL"], prefix: "tencent/", live: true, local: false,
-    },
-    ProviderSpec {
-        id: "fireworks", name: "Fireworks AI", desc: "OpenAI-compatible direct model API",
-        env_keys: &["FIREWORKS_API_KEY"], base_url: Some("https://api.fireworks.ai/inference/v1"),
-        base_url_env: &["FIREWORKS_BASE_URL"], prefix: "fireworks/", live: true, local: false,
-    },
-    ProviderSpec {
-        id: "arcee", name: "Arcee AI", desc: "Trinity models, direct API",
-        env_keys: &["ARCEE_API_KEY"], base_url: Some("https://conductor.arcee.ai/v1"),
-        base_url_env: &["ARCEE_BASE_URL"], prefix: "arcee/", live: true, local: false,
-    },
-    ProviderSpec {
-        id: "gmi", name: "GMI Cloud", desc: "Multi-model direct API",
-        env_keys: &["GMI_API_KEY"], base_url: Some("https://api.gmi-serving.com/v1"),
-        base_url_env: &["GMI_BASE_URL"], prefix: "gmi/", live: true, local: false,
-    },
-    ProviderSpec {
         id: "kilocode", name: "Kilo Code", desc: "Kilo Gateway API",
+        group: ProviderGroup::Cloud,
         env_keys: &["KILOCODE_API_KEY"], base_url: Some("https://api.kilocode.ai/api/openrouter"),
         base_url_env: &["KILOCODE_BASE_URL"], prefix: "kilocode/", live: true, local: false,
     },
     ProviderSpec {
-        id: "upstage", name: "Upstage", desc: "Solar API",
-        env_keys: &["UPSTAGE_API_KEY"], base_url: Some("https://api.upstage.ai/v1"),
-        base_url_env: &["UPSTAGE_BASE_URL"], prefix: "upstage/", live: true, local: false,
-    },
-    ProviderSpec {
-        id: "alibaba", name: "Alibaba Cloud Coding Plan", desc: "Dedicated coding tier",
-        env_keys: &["ALIBABA_API_KEY"],
-        base_url: Some("https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
-        base_url_env: &["ALIBABA_BASE_URL"], prefix: "alibaba/", live: true, local: false,
-    },
-    ProviderSpec {
         id: "cerebras", name: "Cerebras", desc: "Ultra-fast wafer-scale inference",
+        group: ProviderGroup::Cloud,
         env_keys: &["CEREBRAS_API_KEY"], base_url: Some("https://api.cerebras.ai/v1"),
         base_url_env: &["CEREBRAS_BASE_URL"], prefix: "cerebras/", live: true, local: false,
     },
     ProviderSpec {
         id: "sambanova", name: "SambaNova Cloud", desc: "Fast 70B/405B inference",
+        group: ProviderGroup::Cloud,
         env_keys: &["SAMBANOVA_API_KEY"], base_url: Some("https://api.sambanova.ai/v1"),
         base_url_env: &["SAMBANOVA_BASE_URL"], prefix: "sambanova/", live: true, local: false,
     },
     ProviderSpec {
-        id: "mistral", name: "Mistral AI", desc: "Codestral & Mistral models",
-        env_keys: &["MISTRAL_API_KEY"], base_url: Some("https://api.mistral.ai/v1"),
-        base_url_env: &["MISTRAL_BASE_URL"], prefix: "mistral/", live: true, local: false,
+        id: "fireworks", name: "Fireworks AI", desc: "OpenAI-compatible direct model API",
+        group: ProviderGroup::Cloud,
+        env_keys: &["FIREWORKS_API_KEY"], base_url: Some("https://api.fireworks.ai/inference/v1"),
+        base_url_env: &["FIREWORKS_BASE_URL"], prefix: "fireworks/", live: true, local: false,
     },
     ProviderSpec {
         id: "together", name: "Together AI", desc: "Open models and fast inference",
+        group: ProviderGroup::Cloud,
         env_keys: &["TOGETHER_API_KEY"], base_url: Some("https://api.together.xyz/v1"),
         base_url_env: &["TOGETHER_BASE_URL"], prefix: "together/", live: true, local: false,
     },
     ProviderSpec {
+        id: "mistral", name: "Mistral AI", desc: "Codestral & Mistral models",
+        group: ProviderGroup::Cloud,
+        env_keys: &["MISTRAL_API_KEY"], base_url: Some("https://api.mistral.ai/v1"),
+        base_url_env: &["MISTRAL_BASE_URL"], prefix: "mistral/", live: true, local: false,
+    },
+    ProviderSpec {
         id: "cohere", name: "Cohere", desc: "Command R+ models",
+        group: ProviderGroup::Cloud,
         env_keys: &["COHERE_API_KEY"], base_url: Some("https://api.cohere.com/v2"),
         base_url_env: &["COHERE_BASE_URL"], prefix: "cohere/", live: true, local: false,
     },
-    // ── Local backends ─────────────────────────────────────────────────────
     ProviderSpec {
-        id: "ollama", name: "Ollama (local)", desc: "Local models on your GPU — free",
-        env_keys: &[], base_url: Some("http://localhost:11434"),
-        base_url_env: &["OLLAMA_BASE_URL", "OLLAMA_HOST"], prefix: "ollama/", live: true, local: true,
+        id: "tencent", name: "Tencent TokenHub", desc: "Hunyuan and partner models",
+        group: ProviderGroup::Cloud,
+        env_keys: &["TENCENT_API_KEY"], base_url: Some("https://tokenhub.tencentmaas.com/v1"),
+        base_url_env: &["TENCENT_BASE_URL"], prefix: "tencent/", live: true, local: false,
     },
     ProviderSpec {
-        id: "lmstudio", name: "LM Studio", desc: "Local desktop model server",
-        env_keys: &[], base_url: Some("http://localhost:1234"),
+        id: "arcee", name: "Arcee AI", desc: "Trinity models, direct API",
+        group: ProviderGroup::Cloud,
+        env_keys: &["ARCEE_API_KEY"], base_url: Some("https://conductor.arcee.ai/v1"),
+        base_url_env: &["ARCEE_BASE_URL"], prefix: "arcee/", live: true, local: false,
+    },
+    ProviderSpec {
+        id: "gmi", name: "GMI Cloud", desc: "Multi-model direct API",
+        group: ProviderGroup::Cloud,
+        env_keys: &["GMI_API_KEY"], base_url: Some("https://api.gmi-serving.com/v1"),
+        base_url_env: &["GMI_BASE_URL"], prefix: "gmi/", live: true, local: false,
+    },
+    ProviderSpec {
+        id: "upstage", name: "Upstage", desc: "Solar API",
+        group: ProviderGroup::Cloud,
+        env_keys: &["UPSTAGE_API_KEY"], base_url: Some("https://api.upstage.ai/v1"),
+        base_url_env: &["UPSTAGE_BASE_URL"], prefix: "upstage/", live: true, local: false,
+    },
+    // ── Local backends ─────────────────────────────────────────────────────
+    ProviderSpec {
+        id: "aura-local", name: "Aura Local Model", desc: "Aura fine-tuned & grounded local models",
+        group: ProviderGroup::Local,
+        env_keys: &[], base_url: Some("http://127.0.0.1:1234/v1"),
+        base_url_env: &["AURA_LOCAL_BASE_URL", "LMSTUDIO_BASE_URL"], prefix: "aura-local/", live: true, local: true,
+    },
+    ProviderSpec {
+        id: "lmstudio", name: "LM Studio", desc: "Local desktop model server (127.0.0.1:1234)",
+        group: ProviderGroup::Local,
+        env_keys: &[], base_url: Some("http://127.0.0.1:1234/v1"),
         base_url_env: &["LMSTUDIO_BASE_URL"], prefix: "lmstudio/", live: true, local: true,
+    },
+    ProviderSpec {
+        id: "ollama", name: "Ollama (local)", desc: "Local models on your GPU — free",
+        group: ProviderGroup::Local,
+        env_keys: &[], base_url: Some("http://localhost:11434"),
+        base_url_env: &["OLLAMA_BASE_URL", "OLLAMA_HOST"], prefix: "ollama/", live: true, local: true,
     },
 ];
 
@@ -372,24 +464,36 @@ pub const KNOWN_MODELS: &[StaticModel] = &[
     m("alibaba/qwen3-coder-plus", "Qwen3 Coder Plus (Alibaba Plan)", "alibaba", "Powerful · Coding Tier"),
     m("alibaba/qwen-max", "Qwen Max (Alibaba Plan)", "alibaba", "Powerful · Coding Tier"),
 
-    // ── OpenCode Zen / Go ────────────────────────────────────────────────
+    // ── OpenCode Zen (PAYG) & Go (Coding Plan) ─────────────────────────────
     m("opencode/big-pickle", "Big Pickle (free)", "opencode", "Powerful · free"),
     m("opencode/mimo-v2.5-free", "MiMo V2.5 (free)", "opencode", "Fast · free"),
     m("opencode/nemotron-3-ultra-free", "Nemotron 3 Ultra (free)", "opencode", "Powerful · free"),
     m("opencode/hy3-free", "HY3 (free)", "opencode", "Fast · free"),
     m("opencode/gpt-5.4", "GPT-5.4", "opencode", "Powerful · paid"),
     m("opencode/claude-sonnet-5", "Claude Sonnet 5", "opencode", "Powerful · paid"),
-    m("go-anthropic/claude-sonnet-5", "Claude Sonnet 5 (Go)", "opencode", "Powerful"),
-    m("go-anthropic/claude-haiku-4-5", "Claude Haiku 4.5 (Go)", "opencode", "Fast"),
-    m("go-anthropic/claude-opus-5", "Claude Opus 5 (Go)", "opencode", "Powerful"),
-    m("go-anthropic/minimax-m3", "MiniMax M3 (Go)", "opencode", "Anthropic API · agentic"),
-    m("go-anthropic/minimax-m2.7", "MiniMax M2.7 (Go)", "opencode", "Anthropic API · fast"),
-    m("go-anthropic/minimax-m2.5", "MiniMax M2.5 (Go)", "opencode", "Anthropic API · budget"),
-    m("go-anthropic/qwen3.7-max", "Qwen3.7 Max (Go)", "opencode", "Anthropic API · powerful"),
-    m("go-anthropic/qwen3.7-plus", "Qwen3.7 Plus (Go)", "opencode", "Anthropic API · balanced"),
-    m("go-anthropic/qwen3.6-plus", "Qwen3.6 Plus (Go)", "opencode", "Anthropic API · balanced"),
+    m("go-anthropic/claude-sonnet-5", "Claude Sonnet 5 (Go)", "opencode-go", "Powerful"),
+    m("go-anthropic/claude-haiku-4-5", "Claude Haiku 4.5 (Go)", "opencode-go", "Fast"),
+    m("go-anthropic/claude-opus-5", "Claude Opus 5 (Go)", "opencode-go", "Powerful"),
+    m("go-anthropic/minimax-m3", "MiniMax M3 (Go)", "opencode-go", "Anthropic API · agentic"),
+    m("go-anthropic/minimax-m2.7", "MiniMax M2.7 (Go)", "opencode-go", "Anthropic API · fast"),
+    m("go-anthropic/minimax-m2.5", "MiniMax M2.5 (Go)", "opencode-go", "Anthropic API · budget"),
+    m("go-anthropic/qwen3.7-max", "Qwen3.7 Max (Go)", "opencode-go", "Anthropic API · powerful"),
+    m("go-anthropic/qwen3.7-plus", "Qwen3.7 Plus (Go)", "opencode-go", "Anthropic API · balanced"),
+    m("go-anthropic/qwen3.6-plus", "Qwen3.6 Plus (Go)", "opencode-go", "Anthropic API · balanced"),
+    m("opencode-go/beam-free", "Beam (Go free)", "opencode-go", "Fast · free"),
+
+    // ── Inception ────────────────────────────────────────────────────────
+    m("inception/mercury-3", "Mercury 3", "inception", "Diffusion · 1M · ~1000 tok/s"),
+    m("inception/mercury-2.5", "Mercury 2.5", "inception", "Diffusion · 260k"),
+    m("inception/mercury-2", "Mercury 2", "inception", "Diffusion · 128k"),
+
+    // ── Nebius AI Studio ─────────────────────────────────────────────────
+    m("nebius/meta-llama/Meta-Llama-3.3-70B-Instruct", "Llama 3.3 70B (Nebius)", "nebius", "Fast · 128k"),
+    m("nebius/deepseek-ai/DeepSeek-R1", "DeepSeek R1 (Nebius)", "nebius", "Reasoning"),
+    m("nebius/Qwen/Qwen2.5-Coder-32B-Instruct", "Qwen 2.5 Coder 32B (Nebius)", "nebius", "Code · 32k"),
 
     // ── OpenRouter (offline fallback — refresh live for the full catalogue) ─
+    m("openrouter/free", "OpenRouter Free Router", "openrouter", "Free · auto-routed"),
     m("openrouter/anthropic/claude-3.5-sonnet", "Claude 3.5 Sonnet (OR)", "openrouter", "Fast"),
     m("openrouter/anthropic/claude-3-opus", "Claude 3 Opus (OR)", "openrouter", "Powerful"),
     m("openrouter/openai/gpt-4o", "GPT-4o (OR)", "openrouter", "Powerful"),
@@ -454,7 +558,16 @@ pub const KNOWN_MODELS: &[StaticModel] = &[
     m("ollama/deepseek-coder-v2", "DeepSeek Coder V2 (local)", "ollama", "Local · code"),
     m("ollama/command-r", "Command-R (local)", "ollama", "Local · Cohere"),
 
+    // ── Aura Local Model (fine-tuned / grounded local server) ────────────
+    m("aura-local/lfm3-1.7b-aura-grounded", "LFM3 1.7B Aura Grounded (local)", "aura-local", "Local · free · grounded"),
+    m("aura-local/liquid/lfm2.5-1.2b", "LFM2.5 1.2B Instruct (Aura local)", "aura-local", "Local · free · fast"),
+    m("aura-local/lfm2.5-1.2b-aura-dpo", "LFM2.5 1.2B Aura DPO (local)", "aura-local", "Local · free · grounded"),
+
     // ── LM Studio / local OpenAI-compatible ─────────────────────────────
+    m("lmstudio/liquid/lfm2.5-1.2b", "LFM2.5 1.2B Instruct (LM Studio)", "lmstudio", "Local · free · fast"),
+    m("lmstudio/lfm3-1.7b-aura-grounded", "LFM3 1.7B Aura Grounded (LM Studio)", "lmstudio", "Local · free · grounded"),
+    m("lmstudio/coder-lfm3-1.7b-qwen4-max", "Coder LFM3 1.7B Qwen4 Max (LM Studio)", "lmstudio", "Local · free · code"),
+    m("lmstudio/twil-8b", "TWIL 8B (LM Studio)", "lmstudio", "Local · free"),
     m("local/qwen2.5-coder-32b-instruct", "Qwen 2.5 Coder 32B (local)", "lmstudio", "Local · code"),
     m("local/llama-3.3-70b-instruct", "Llama 3.3 70B (local)", "lmstudio", "Local · strong"),
     m("local/mistral-large", "Mistral Large (local)", "lmstudio", "Local · powerful"),
@@ -464,7 +577,27 @@ pub fn provider(id: &str) -> Option<&'static ProviderSpec> {
     PROVIDERS.iter().find(|p| p.id == id)
 }
 
+/// Human-friendly provider label for built-in and custom provider ids.
+pub fn provider_display_name(id: &str) -> String {
+    if let Some(p) = provider(id) {
+        return p.name.to_string();
+    }
+    if let Some(c) = crate::provider::custom_providers()
+        .into_iter()
+        .find(|c| c.id == id)
+    {
+        if !c.name.trim().is_empty() {
+            return c.name;
+        }
+    }
+    id.to_string()
+}
+
 pub fn provider_for_model(model_id: &str) -> &'static str {
+    let lower = model_id.to_lowercase();
+    if lower.starts_with("go-anthropic/") || lower.starts_with("opencode-go/") {
+        return "opencode-go";
+    }
     crate::provider::provider_family(model_id)
 }
 
@@ -637,10 +770,247 @@ pub fn key_status(spec: &ProviderSpec) -> &'static str {
     }
 }
 
-/// Endpoint for a provider, honouring its `<X>_BASE_URL` override.
+/// Plan options (Coding Plan vs PAYG API Plan) for a provider so the setup UI
+/// can pick the exact endpoint, env var, and routing prefix automatically.
+pub fn plans_for(provider_id: &str) -> Vec<ProviderPlan> {
+    match provider_id {
+        "alibaba" | "qwen" => vec![
+            ProviderPlan {
+                id: "alibaba-coding",
+                label: "Alibaba Coding Plan",
+                desc: "Dedicated coding gateway (coding-intl.dashscope.aliyuncs.com)",
+                base_url: "https://coding-intl.dashscope.aliyuncs.com/v1",
+                api_key_env: "ALIBABA_API_KEY",
+                base_url_env: "ALIBABA_BASE_URL",
+                prefix: "alibaba/",
+            },
+            ProviderPlan {
+                id: "qwen-payg-intl",
+                label: "Qwen PAYG API (Intl)",
+                desc: "Pay-as-you-go DashScope International",
+                base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                api_key_env: "DASHSCOPE_API_KEY",
+                base_url_env: "DASHSCOPE_BASE_URL",
+                prefix: "qwen/",
+            },
+            ProviderPlan {
+                id: "qwen-payg-cn",
+                label: "Qwen PAYG API (China)",
+                desc: "Pay-as-you-go DashScope Mainland",
+                base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                api_key_env: "DASHSCOPE_API_KEY",
+                base_url_env: "DASHSCOPE_BASE_URL",
+                prefix: "qwen/",
+            },
+        ],
+        "zhipu" => vec![
+            ProviderPlan {
+                id: "zhipu-coding",
+                label: "GLM Coding Plan",
+                desc: "Dedicated Coding Plan quota (api.z.ai/api/coding/paas/v4)",
+                base_url: "https://api.z.ai/api/coding/paas/v4",
+                api_key_env: "ZHIPU_API_KEY",
+                base_url_env: "ZHIPU_CODING_BASE_URL",
+                prefix: "zhipu-coding/",
+            },
+            ProviderPlan {
+                id: "zhipu-payg",
+                label: "Z.AI PAYG API Plan",
+                desc: "Pay-as-you-go general API (api.z.ai/api/paas/v4)",
+                base_url: "https://api.z.ai/api/paas/v4",
+                api_key_env: "ZHIPU_API_KEY",
+                base_url_env: "ZHIPU_BASE_URL",
+                prefix: "",
+            },
+        ],
+        "xiaomi" => vec![
+            ProviderPlan {
+                id: "xiaomi-token-sgp",
+                label: "Token / Coding Plan (Singapore)",
+                desc: "For tp- keys (token-plan-sgp.xiaomimimo.com)",
+                base_url: "https://token-plan-sgp.xiaomimimo.com/v1",
+                api_key_env: "XIAOMI_API_KEY",
+                base_url_env: "XIAOMI_BASE_URL",
+                prefix: "",
+            },
+            ProviderPlan {
+                id: "xiaomi-token-ams",
+                label: "Token / Coding Plan (Amsterdam)",
+                desc: "For tp- keys (token-plan-ams.xiaomimimo.com)",
+                base_url: "https://token-plan-ams.xiaomimimo.com/v1",
+                api_key_env: "XIAOMI_API_KEY",
+                base_url_env: "XIAOMI_BASE_URL",
+                prefix: "",
+            },
+            ProviderPlan {
+                id: "xiaomi-token-cn",
+                label: "Token / Coding Plan (China)",
+                desc: "For tp- keys (token-plan-cn.xiaomimimo.com)",
+                base_url: "https://token-plan-cn.xiaomimimo.com/v1",
+                api_key_env: "XIAOMI_API_KEY",
+                base_url_env: "XIAOMI_BASE_URL",
+                prefix: "",
+            },
+            ProviderPlan {
+                id: "xiaomi-payg",
+                label: "PAYG API Plan",
+                desc: "For sk- keys (api.xiaomimimo.com)",
+                base_url: "https://api.xiaomimimo.com/v1",
+                api_key_env: "XIAOMI_API_KEY",
+                base_url_env: "XIAOMI_BASE_URL",
+                prefix: "",
+            },
+        ],
+        "opencode-go" | "opencode" => vec![
+            ProviderPlan {
+                id: "opencode-go",
+                label: "OpenCode Go (Coding Plan $10/mo)",
+                desc: "Subscription endpoint (opencode.ai/zen/go/v1)",
+                base_url: "https://opencode.ai/zen/go/v1",
+                api_key_env: "OPENCODE_GO_API_KEY",
+                base_url_env: "OPENCODE_GO_BASE_URL",
+                prefix: "go-anthropic/",
+            },
+            ProviderPlan {
+                id: "opencode-zen",
+                label: "OpenCode Zen (PAYG API Plan)",
+                desc: "Pay-as-you-go endpoint (opencode.ai/zen/v1)",
+                base_url: "https://opencode.ai/zen/v1",
+                api_key_env: "OPENCODE_API_KEY",
+                base_url_env: "OPENCODE_BASE_URL",
+                prefix: "opencode/",
+            },
+        ],
+        "kimi" => vec![
+            ProviderPlan {
+                id: "kimi-coding",
+                label: "Kimi Coding Plan",
+                desc: "Kimi For Coding endpoint (api.kimi.com/coding/v1)",
+                base_url: "https://api.kimi.com/coding/v1",
+                api_key_env: "MOONSHOT_API_KEY",
+                base_url_env: "KIMI_CODING_BASE_URL",
+                prefix: "kimi-coding/",
+            },
+            ProviderPlan {
+                id: "kimi-payg-global",
+                label: "Moonshot PAYG API (Global)",
+                desc: "Global pay-as-you-go (api.moonshot.ai/v1)",
+                base_url: "https://api.moonshot.ai/v1",
+                api_key_env: "MOONSHOT_API_KEY",
+                base_url_env: "MOONSHOT_BASE_URL",
+                prefix: "kimi/",
+            },
+            ProviderPlan {
+                id: "kimi-payg-cn",
+                label: "Moonshot PAYG API (China)",
+                desc: "Mainland pay-as-you-go (api.moonshot.cn/v1)",
+                base_url: "https://api.moonshot.cn/v1",
+                api_key_env: "MOONSHOT_API_KEY",
+                base_url_env: "MOONSHOT_BASE_URL",
+                prefix: "kimi/",
+            },
+        ],
+        "minimax" => vec![
+            ProviderPlan {
+                id: "minimax-global",
+                label: "Global PAYG / Coding Plan",
+                desc: "International endpoint (api.minimax.io/v1)",
+                base_url: "https://api.minimax.io/v1",
+                api_key_env: "MINIMAX_API_KEY",
+                base_url_env: "MINIMAX_BASE_URL",
+                prefix: "minimax/",
+            },
+            ProviderPlan {
+                id: "minimax-cn",
+                label: "China API Plan",
+                desc: "Mainland endpoint (api.minimaxi.com/v1)",
+                base_url: "https://api.minimaxi.com/v1",
+                api_key_env: "MINIMAX_API_KEY",
+                base_url_env: "MINIMAX_BASE_URL",
+                prefix: "minimax/",
+            },
+        ],
+        "aura-local" => vec![
+            ProviderPlan {
+                id: "aura-local-lmstudio",
+                label: "LM Studio Gateway (:1234)",
+                desc: "Serve Aura fine-tuned GGUFs via LM Studio on 127.0.0.1:1234/v1",
+                base_url: "http://127.0.0.1:1234/v1",
+                api_key_env: "",
+                base_url_env: "AURA_LOCAL_BASE_URL",
+                prefix: "aura-local/",
+            },
+            ProviderPlan {
+                id: "aura-local-llamacpp",
+                label: "llama.cpp Server (:8080)",
+                desc: "Standalone llama-server on 127.0.0.1:8080/v1",
+                base_url: "http://127.0.0.1:8080/v1",
+                api_key_env: "",
+                base_url_env: "AURA_LOCAL_BASE_URL",
+                prefix: "aura-local/",
+            },
+        ],
+        "lmstudio" => vec![
+            ProviderPlan {
+                id: "lmstudio-default",
+                label: "LM Studio Local (127.0.0.1:1234)",
+                desc: "Default LM Studio OpenAI-compatible server on port 1234",
+                base_url: "http://127.0.0.1:1234/v1",
+                api_key_env: "",
+                base_url_env: "LMSTUDIO_BASE_URL",
+                prefix: "lmstudio/",
+            },
+            ProviderPlan {
+                id: "lmstudio-1235",
+                label: "LM Studio Alt Port (:1235)",
+                desc: "Alternate LM Studio local server on port 1235",
+                base_url: "http://127.0.0.1:1235/v1",
+                api_key_env: "",
+                base_url_env: "LMSTUDIO_BASE_URL",
+                prefix: "lmstudio/",
+            },
+        ],
+        _ => {
+            if let Some(spec) = provider(provider_id) {
+                if let (Some(base), Some(key_env)) = (spec.base_url, spec.env_keys.first()) {
+                    return vec![ProviderPlan {
+                        id: spec.id,
+                        label: "PAYG API Plan",
+                        desc: spec.desc,
+                        base_url: base,
+                        api_key_env: key_env,
+                        base_url_env: spec.base_url_env.first().copied().unwrap_or(""),
+                        prefix: spec.prefix,
+                    }];
+                }
+            }
+            Vec::new()
+        }
+    }
+}
+
+/// Auto-detect Xiaomi plan index from a pasted key (`tp-` vs `sk-`).
+pub fn infer_plan_for_key(provider_id: &str, key: &str) -> Option<&'static str> {
+    let k = key.trim();
+    if provider_id == "xiaomi" {
+        if k.starts_with("tp-") {
+            return Some("xiaomi-token-sgp");
+        }
+        if k.starts_with("sk-") {
+            return Some("xiaomi-payg");
+        }
+    }
+    if provider_id == "kimi" && k.starts_with("sk-kimi-") {
+        return Some("kimi-coding");
+    }
+    None
+}
+
+/// Endpoint for a provider, honouring its `<X>_BASE_URL` override (in
+/// `keys.json`, env, and `.env`).
 pub fn base_url_for(spec: &ProviderSpec) -> String {
     for env_name in spec.base_url_env {
-        if let Ok(url) = std::env::var(env_name) {
+        if let Some(url) = load_api_key_named(env_name) {
             let url = url.trim().trim_end_matches('/');
             if !url.is_empty() {
                 // OLLAMA_HOST is a bare host:port; everything else is a URL.
@@ -658,6 +1028,33 @@ pub fn base_url_for(spec: &ProviderSpec) -> String {
         };
     }
     spec.base_url.unwrap_or("").trim_end_matches('/').to_string()
+}
+
+/// Live model list for a user-added CustomProvider.
+pub async fn fetch_custom_live_models(
+    http: &reqwest::Client,
+    custom: &CustomProvider,
+) -> Result<Vec<ModelInfo>, String> {
+    let base = custom.base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err("no base URL configured".into());
+    }
+    let key = if custom.api_key_env.trim().is_empty() {
+        None
+    } else {
+        load_api_key_named(custom.api_key_env.trim())
+    };
+    let prefix = if custom.prefix.trim().is_empty() {
+        format!("{}/", custom.id.trim())
+    } else {
+        let t = custom.prefix.trim();
+        if t.ends_with('/') { t.to_string() } else { format!("{t}/") }
+    };
+    let fetch = fetch_openai_endpoint(http, base, &prefix, &custom.id, key.as_deref());
+    match tokio::time::timeout(Duration::from_secs(8), fetch).await {
+        Ok(res) => res,
+        Err(_) => Err("timed out after 8s".into()),
+    }
 }
 
 /// Live model list for one provider. Best-effort: returns `Err` with a short
@@ -700,11 +1097,46 @@ async fn fetch_openai_compatible(
     spec: &ProviderSpec,
     key: Option<&str>,
 ) -> Result<Vec<ModelInfo>, String> {
-    let base = base_url_for(spec);
+    let mut base = base_url_for(spec);
+    if spec.id == "lmstudio" || spec.id == "aura-local" {
+        let stripped = base.trim_end_matches("/v1").trim_end_matches('/');
+        base = format!("{stripped}/v1");
+    }
+    fetch_openai_endpoint(http, &base, spec.prefix, spec.id, key).await
+}
+
+fn is_non_chat_openai_model(id: &str) -> bool {
+    let l = id.to_ascii_lowercase();
+    [
+        "embedding",
+        "whisper",
+        "tts",
+        "dall-e",
+        "gpt-image",
+        "davinci",
+        "babbage",
+        "ada-",
+        "curie",
+        "moderation",
+        "realtime",
+        "transcribe",
+        "sora",
+    ]
+    .iter()
+    .any(|bad| l.contains(bad))
+}
+
+async fn fetch_openai_endpoint(
+    http: &reqwest::Client,
+    base: &str,
+    prefix: &str,
+    family: &str,
+    key: Option<&str>,
+) -> Result<Vec<ModelInfo>, String> {
     if base.is_empty() {
         return Err("no endpoint configured".into());
     }
-    let url = format!("{base}/models");
+    let url = format!("{}/models", base.trim_end_matches('/'));
     let mut req = http.get(url);
     if let Some(key) = key {
         req = req.bearer_auth(key);
@@ -727,18 +1159,32 @@ async fn fetch_openai_compatible(
             if id.is_empty() {
                 return None;
             }
+            if (family == "openai" || family == "lmstudio" || family == "aura-local")
+                && is_non_chat_openai_model(id)
+            {
+                return None;
+            }
+            let is_local = matches!(family, "lmstudio" | "aura-local" | "ollama");
             let name = item.get("name").and_then(Value::as_str).unwrap_or(id);
-            let free = item
-                .get("pricing")
-                .and_then(|p| p.get("prompt"))
-                .and_then(Value::as_str)
-                .map(|p| p == "0")
-                .unwrap_or(false);
+            let free = is_local
+                || item
+                    .get("pricing")
+                    .and_then(|p| p.get("prompt"))
+                    .and_then(Value::as_str)
+                    .map(|p| p == "0")
+                    .unwrap_or(false)
+                || id.ends_with(":free")
+                || id.ends_with("-free");
+            let full_id = if prefix.is_empty() || id.starts_with(prefix) {
+                id.to_string()
+            } else {
+                format!("{prefix}{id}")
+            };
             Some(enrich(
-                format!("{}{}", spec.prefix, id),
+                full_id,
                 name.to_string(),
-                spec.id,
-                "Live",
+                family,
+                if is_local { "Local" } else { "Live" },
                 free,
             ))
         })
@@ -807,42 +1253,85 @@ async fn fetch_anthropic(http: &reqwest::Client, key: &str) -> Result<Vec<ModelI
     Ok(out)
 }
 
+fn is_non_chat_google_model(id: &str) -> bool {
+    let l = id.to_ascii_lowercase();
+    [
+        "image",
+        "tts",
+        "native-audio",
+        "-live",
+        "transcribe",
+        "music",
+        "embedding",
+        "aqa",
+        "robotics",
+        "computer-use",
+        "lyria",
+        "nano-banana",
+        "deep-research",
+        "veo",
+        "imagen",
+    ]
+    .iter()
+    .any(|bad| l.contains(bad))
+}
+
 async fn fetch_google(http: &reqwest::Client, key: &str) -> Result<Vec<ModelInfo>, String> {
     if key.is_empty() {
         return Err("add GOOGLE_API_KEY first".into());
     }
-    let url = format!("https://generativelanguage.googleapis.com/v1beta/models?key={key}");
-    let resp = http.get(url).send().await.map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status().as_u16()));
-    }
-    let value: Value = resp.json().await.map_err(|e| e.to_string())?;
-    let items = value
-        .get("models")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "unexpected answer (no models array)".to_string())?;
     let mut out = Vec::new();
-    for item in items {
-        let supports = item
-            .get("supportedGenerationMethods")
-            .and_then(Value::as_array)
-            .map(|methods| methods.iter().any(|m| m.as_str() == Some("generateContent")))
-            .unwrap_or(true);
-        if !supports {
-            continue;
+    let mut page_token: Option<String> = None;
+    for _ in 0..10 {
+        let mut url =
+            format!("https://generativelanguage.googleapis.com/v1beta/models?key={key}&pageSize=200");
+        if let Some(tok) = &page_token {
+            url.push_str("&pageToken=");
+            url.push_str(tok);
         }
-        let Some(name) = item.get("name").and_then(Value::as_str) else { continue };
-        let id = name.strip_prefix("models/").unwrap_or(name);
-        let display = item.get("displayName").and_then(Value::as_str).unwrap_or(id);
-        out.push(ModelInfo {
-            id: format!("gemini/{id}"),
-            name: display.to_string(),
-            family: "google".into(),
-            speed: "Live".into(),
-            free: false,
-        });
+        let resp = http.get(url).send().await.map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            return if out.is_empty() {
+                Err(format!("HTTP {}", resp.status().as_u16()))
+            } else {
+                Ok(out)
+            };
+        }
+        let value: Value = resp.json().await.map_err(|e| e.to_string())?;
+        let items = value
+            .get("models")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "unexpected answer (no models array)".to_string())?;
+        for item in items {
+            let supports = item
+                .get("supportedGenerationMethods")
+                .and_then(Value::as_array)
+                .map(|methods| methods.iter().any(|m| m.as_str() == Some("generateContent")))
+                .unwrap_or(true);
+            if !supports {
+                continue;
+            }
+            let Some(name) = item.get("name").and_then(Value::as_str) else { continue };
+            let id = name.strip_prefix("models/").unwrap_or(name);
+            if is_non_chat_google_model(id) {
+                continue;
+            }
+            let display = item.get("displayName").and_then(Value::as_str).unwrap_or(id);
+            out.push(ModelInfo {
+                id: format!("gemini/{id}"),
+                name: display.to_string(),
+                family: "google".into(),
+                speed: "Live".into(),
+                free: false,
+            });
+        }
+        match value.get("nextPageToken").and_then(Value::as_str) {
+            Some(tok) if !tok.is_empty() => page_token = Some(tok.to_string()),
+            _ => break,
+        }
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
+    out.dedup_by(|a, b| a.id.eq_ignore_ascii_case(&b.id));
     if out.is_empty() {
         return Err("provider returned an empty model list".into());
     }
@@ -905,14 +1394,21 @@ async fn fetch_openrouter(
         .filter_map(|item| {
             let id = item.get("id").and_then(Value::as_str)?;
             let name = item.get("name").and_then(Value::as_str).unwrap_or(id);
+            let full_id = if id.starts_with("openrouter/") {
+                id.to_string()
+            } else {
+                format!("openrouter/{id}")
+            };
             let free = item
                 .get("pricing")
                 .and_then(|p| p.get("prompt"))
                 .and_then(Value::as_str)
                 .map(|p| p == "0")
-                .unwrap_or(false);
+                .unwrap_or(false)
+                || id.ends_with(":free")
+                || id == "openrouter/free";
             Some(enrich(
-                format!("openrouter/{id}"),
+                full_id,
                 name.to_string(),
                 "openrouter",
                 "Live",
@@ -1028,6 +1524,21 @@ mod tests {
         assert_eq!(filter_providers("openrouter").len(), 1);
         assert_eq!(provider("openrouter").unwrap().name, "OpenRouter");
         assert_eq!(provider_for_model("openrouter/anthropic/claude-3.5-sonnet"), "openrouter");
+    }
+
+    #[test]
+    fn provider_plans_and_key_inference_cover_coding_and_payg() {
+        let ali = plans_for("alibaba");
+        assert!(ali.iter().any(|p| p.id == "alibaba-coding" && p.base_url.contains("coding-intl")));
+        assert!(ali.iter().any(|p| p.base_url.contains("dashscope-intl")));
+
+        let oc = plans_for("opencode");
+        assert!(oc.iter().any(|p| p.id == "opencode-go" && p.base_url.ends_with("/zen/go/v1")));
+        assert!(oc.iter().any(|p| p.id == "opencode-zen" && p.base_url.ends_with("/zen/v1")));
+
+        assert_eq!(infer_plan_for_key("xiaomi", "tp-abc123"), Some("xiaomi-token-sgp"));
+        assert_eq!(infer_plan_for_key("xiaomi", "sk-abc123"), Some("xiaomi-payg"));
+        assert_eq!(infer_plan_for_key("kimi", "sk-kimi-xyz"), Some("kimi-coding"));
     }
 
     /// Live checks. Run with:

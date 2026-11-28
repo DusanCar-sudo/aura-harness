@@ -134,6 +134,7 @@ async fn runs_a_command_tool_and_answers_afterwards() {
         registry,
         mcp: Arc::new(Mutex::new(Default::default())),
         approvals: appr_rx,
+        subagent: None,
     };
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(256);
@@ -237,6 +238,7 @@ async fn runs_the_builtin_shell_tool_without_approval() {
         registry,
         mcp: Arc::new(Mutex::new(Default::default())),
         approvals: appr_rx,
+        subagent: None,
     };
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(256);

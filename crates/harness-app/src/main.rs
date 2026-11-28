@@ -21,9 +21,9 @@ use harness_core::agent::{self, Approval, LoopEvent, LoopInput};
 use harness_core::api::{ChatOptions, Message};
 use harness_core::attach::{self, Attachment};
 use harness_core::config::{self, Config, EffortChoice, ModelChoice, Plugins};
-use harness_core::mcp::{self, McpConnection};
+use harness_core::mcp::{self, McpConnection, McpServerBoot};
 use harness_core::session::{sessions_dir, Session, SessionHeader};
-use harness_core::tools::{self, RegisteredTool, ToolRegistry};
+use harness_core::tools::{self, ToolRegistry};
 use tokio::sync::Mutex;
 
 use ui::chat::LiveTurn;
@@ -33,13 +33,6 @@ use ui::{RightTab, ToolCard};
 
 /// Window icon, embedded so the binary is self-contained.
 const ICON_RGBA: &[u8] = include_bytes!("../../../assets/icon.rgba");
-
-/// Result of an MCP boot pass, delivered back to the UI thread.
-struct McpBoot {
-    tools: Vec<RegisteredTool>,
-    status: Vec<String>,
-    failures: Vec<String>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum View {
@@ -54,8 +47,12 @@ type OnlineResult = (
     Option<String>,
 );
 
-/// A provider's live model answer: (provider id, models or error).
-type ModelFetchResult = (String, Result<Vec<harness_core::models::ModelInfo>, String>);
+/// A provider's live model answer: (provider id, report_error, models or error).
+type ModelFetchResult = (
+    String,
+    bool,
+    Result<Vec<harness_core::models::ModelInfo>, String>,
+);
 
 pub(crate) struct App {
     pub(crate) rt: tokio::runtime::Runtime,
@@ -77,7 +74,8 @@ pub(crate) struct App {
 
     /// Full provider → model factory, opened from the composer or Settings.
     pub(crate) model_factory: ui::model_factory::ModelFactoryState,
-    pub(crate) model_fetch_rx: Option<std_mpsc::Receiver<ModelFetchResult>>,
+    pub(crate) model_fetch_tx: std_mpsc::Sender<ModelFetchResult>,
+    pub(crate) model_fetch_rx: std_mpsc::Receiver<ModelFetchResult>,
 
     /// Voice: microphone capture, transcription and speech playback.
     pub(crate) voice_status: ui::input::VoiceStatus,
@@ -87,6 +85,7 @@ pub(crate) struct App {
     pub(crate) speaking: bool,
 
     pub(crate) live: LiveTurn,
+    pub(crate) live_steps: Vec<harness_core::agent::AgentStep>,
     pub(crate) cards: Vec<ToolCard>,
     pub(crate) busy: bool,
     pub(crate) events: Option<tokio::sync::mpsc::Receiver<LoopEvent>>,
@@ -95,8 +94,11 @@ pub(crate) struct App {
     pub(crate) registry: ToolRegistry,
     pub(crate) mcp: Arc<Mutex<BTreeMap<String, McpConnection>>>,
     pub(crate) mcp_status: Vec<String>,
-    pub(crate) mcp_rx: Option<std_mpsc::Receiver<McpBoot>>,
+    pub(crate) mcp_rx: Option<tokio::sync::mpsc::UnboundedReceiver<McpServerBoot>>,
     pub(crate) mcp_failures: Vec<String>,
+    pub(crate) mcp_errors: BTreeMap<String, String>,
+    pub(crate) mcp_tool_counts: BTreeMap<String, usize>,
+    pub(crate) mcp_connecting: std::collections::BTreeSet<String>,
 
     pub(crate) view: View,
     pub(crate) key_input: String,
@@ -136,6 +138,7 @@ pub(crate) struct App {
     pub(crate) file_tree: ui::filetree::FileTreeState,
     pub(crate) preview: ui::preview::PreviewState,
     pub(crate) catalog_query: String,
+    pub(crate) catalog_category: String,
     /// Launch line typed in the browser's manual field.
     pub(crate) browser_line: String,
     /// Live online search results (registry + GitHub).
@@ -178,6 +181,8 @@ impl App {
         repair_untitled_sessions();
 
         let config = Config::load().unwrap_or_default();
+        harness_core::provider::set_custom_providers(config.custom_providers.clone());
+        let (model_fetch_tx, model_fetch_rx) = std_mpsc::channel();
         let auto_approve = config.auto_approve;
         let project_root = config.project_root.trim().to_string();
         let show_hidden = config.show_hidden_files;
@@ -188,7 +193,9 @@ impl App {
             _ => RightTab::Files,
         };
         theme::apply(&cc.egui_ctx, config.theme);
-        let plugins = config::with_default_plugins(Plugins::load().unwrap_or_default());
+        let plugins = config::with_chrome_plugin(config::with_default_plugins(
+            Plugins::load().unwrap_or_default(),
+        ));
         let api_key = config::load_api_key();
         let sessions = Session::list_all().unwrap_or_default();
 
@@ -219,13 +226,15 @@ impl App {
             model,
             effort,
             model_factory: ui::model_factory::ModelFactoryState::default(),
-            model_fetch_rx: None,
+            model_fetch_tx,
+            model_fetch_rx,
             voice_status: ui::input::VoiceStatus::Idle,
             recorder: None,
             stt_rx: None,
             voice_result_rx: None,
             speaking: false,
             live: LiveTurn::default(),
+            live_steps: Vec::new(),
             cards: Vec::new(),
             busy: false,
             events: None,
@@ -235,6 +244,9 @@ impl App {
             mcp_status: Vec::new(),
             mcp_rx: None,
             mcp_failures: Vec::new(),
+            mcp_errors: BTreeMap::new(),
+            mcp_tool_counts: BTreeMap::new(),
+            mcp_connecting: std::collections::BTreeSet::new(),
             view: if key_is_set(&key_input) {
                 View::Chat
             } else {
@@ -269,6 +281,7 @@ impl App {
             .with_hidden(show_hidden),
             preview: ui::preview::PreviewState::new(),
             catalog_query: String::new(),
+            catalog_category: String::new(),
             browser_line: String::new(),
             online: ui::plugin_browser::OnlineResults::default(),
             online_rx: None,
@@ -288,6 +301,7 @@ impl App {
         app.registry = tools::from_plugins(&app.plugins, app.config.auto_approve);
         app.boot_mcp();
         app.boot_directory();
+        app.fetch_all_ready_models(true);
         app
     }
 
@@ -305,6 +319,7 @@ impl App {
         if already_blank {
             self.stop();
             self.live.clear();
+            self.live_steps.clear();
             self.cards.clear();
             self.error = None;
             self.focus_composer = true;
@@ -405,46 +420,98 @@ impl App {
     fn boot_mcp(&mut self) {
         let servers = self.plugins.mcp.clone();
         let conns = Arc::clone(&self.mcp);
-        let (tx, rx) = std_mpsc::channel();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         self.mcp_rx = Some(rx);
+        self.mcp_errors.clear();
+        self.mcp_failures.clear();
+        self.mcp_tool_counts.clear();
+        self.mcp_connecting = servers
+            .iter()
+            .filter(|(_, s)| s.enabled)
+            .map(|(n, _)| n.clone())
+            .collect();
+        self.rebuild_mcp_status();
 
+        if let Ok(mut guard) = conns.try_lock() {
+            guard.clear();
+        }
         self.rt.spawn(async move {
-            let (mut connected, failures) = mcp::connect_all(&servers).await;
-            let live: Vec<String> = connected.keys().cloned().collect();
-            let registered = mcp::collect_registered(&mut connected).await;
-
-            let status: Vec<String> = servers
-                .iter()
-                .map(|(name, server)| {
-                    ui::settings::mcp_line(name, server.enabled, live.contains(name))
-                })
-                .collect();
-
-            *conns.lock().await = connected;
-
-            let _ = tx.send(McpBoot {
-                tools: registered,
-                status,
-                failures,
-            });
+            mcp::connect_streaming(servers, tx).await;
         });
     }
 
-    /// Fold a completed boot pass into the live registry.
-    fn absorb_mcp(&mut self) {
-        let Some(rx) = self.mcp_rx.as_ref() else {
-            return;
-        };
-        let Ok(boot) = rx.try_recv() else { return };
-        self.mcp_rx = None;
+    fn rebuild_mcp_status(&mut self) {
+        self.mcp_status = self
+            .plugins
+            .mcp
+            .iter()
+            .map(|(name, server)| {
+                if !server.enabled {
+                    format!("{name} — disabled")
+                } else if self.mcp_connecting.contains(name) {
+                    format!("{name} — connecting…")
+                } else if let Some(err) = self.mcp_errors.get(name) {
+                    format!("{name} — failed ({err})")
+                } else {
+                    let t = self.mcp_tool_counts.get(name).copied().unwrap_or(0);
+                    format!("{name} — connected ({t} tools)")
+                }
+            })
+            .collect();
+        self.mcp_failures = self
+            .mcp_errors
+            .iter()
+            .map(|(k, v)| format!("{k}: {v}"))
+            .collect();
+    }
 
-        // Rebuild so a reconnect drops tools that disappeared.
-        self.registry = tools::from_plugins(&self.plugins, self.config.auto_approve);
-        for tool in boot.tools {
-            self.registry.register(tool);
+    /// Fold finished MCP server handshakes into the live registry as they arrive.
+    fn absorb_mcp(&mut self) {
+        let mut updates = Vec::new();
+        let mut disconnected = false;
+        if let Some(rx) = self.mcp_rx.as_mut() {
+            loop {
+                match rx.try_recv() {
+                    Ok(boot) => updates.push(boot),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
+                }
+            }
+        } else {
+            return;
         }
-        self.mcp_status = boot.status;
-        self.mcp_failures = boot.failures;
+        if disconnected {
+            self.mcp_rx = None;
+        }
+        if updates.is_empty() && !disconnected {
+            return;
+        }
+        for boot in updates {
+            self.mcp_connecting.remove(&boot.name);
+            let count = boot.tools.len();
+            if let Some(conn) = boot.conn {
+                let mut guard = self.rt.block_on(self.mcp.lock());
+                guard.insert(boot.name.clone(), conn);
+            }
+            for tool in boot.tools {
+                self.registry.register(tool);
+            }
+            if count > 0 || boot.error.is_none() {
+                self.mcp_tool_counts.insert(boot.name.clone(), count);
+            }
+            if let Some(err) = boot.error {
+                self.mcp_errors.insert(boot.name.clone(), err);
+            } else {
+                self.mcp_errors.remove(&boot.name);
+            }
+        }
+        if disconnected {
+            self.mcp_connecting.clear();
+        }
+        self.rebuild_mcp_status();
     }
 
     fn reconnect(&mut self) {
@@ -463,7 +530,7 @@ impl App {
         });
     }
 
-    /// Kick an online search when the query has settled (600 ms debounce).
+    /// Kick an online search when the query has settled (250 ms debounce).
     fn pump_online_search(&mut self) {
         // Drain any finished search.
         if let Some(rx) = self.online_rx.as_ref() {
@@ -489,7 +556,7 @@ impl App {
 
         match self.online_dirty_since {
             None => self.online_dirty_since = Some(std::time::Instant::now()),
-            Some(since) if since.elapsed() >= Duration::from_millis(600) => {
+            Some(since) if since.elapsed() >= Duration::from_millis(250) => {
                 self.online_dirty_since = None;
                 let http = self.http.clone();
                 let query = q.clone();
@@ -548,7 +615,28 @@ impl App {
         });
     }
 
-    /// Add (or replace) an MCP server from a launch line, persist, reconnect.
+    fn apply_browser_action(
+        &mut self,
+        action: ui::plugin_browser::BrowserAction,
+        ctx: &egui::Context,
+    ) {
+        match action {
+            ui::plugin_browser::BrowserAction::Add { name, line } => {
+                self.add_mcp_server(&name, &line);
+            }
+            ui::plugin_browser::BrowserAction::AddJson(servers) => {
+                self.add_mcp_json(servers);
+            }
+            ui::plugin_browser::BrowserAction::Analyze(url) => {
+                self.start_analyze(&url);
+            }
+            ui::plugin_browser::BrowserAction::Open(url) => {
+                ctx.open_url(egui::OpenUrl::new_tab(url));
+            }
+        }
+    }
+
+    /// Add (or replace) an MCP server from a launch line, validate, persist, reconnect.
     fn add_mcp_server(&mut self, name: &str, line: &str) {
         let mut argv = config::split_args(line);
         if argv.is_empty() {
@@ -556,9 +644,13 @@ impl App {
             return;
         }
         let command = argv.remove(0);
+        if let Err(reason) = config::validate_mcp_command(&command, &argv) {
+            self.error = Some(reason);
+            return;
+        }
         let name = config::normalize_name(name);
         self.plugins.mcp.insert(
-            name,
+            name.clone(),
             config::McpServer {
                 command,
                 args: argv,
@@ -568,11 +660,78 @@ impl App {
         );
         self.browser_line.clear();
         match self.plugins.save() {
-            Ok(()) => self.error = None,
+            Ok(()) => {
+                self.error = None;
+                self.status = Some(format!("Added plugin “{name}” and connecting…"));
+            }
             Err(e) => self.error = Some(format!("could not save plugins: {e}")),
         }
         self.refresh_available();
         self.reconnect();
+    }
+
+    fn add_mcp_json(&mut self, servers: Vec<(String, config::McpServer)>) {
+        let mut added = Vec::new();
+        for (name, srv) in servers {
+            if let Err(reason) = config::validate_mcp_command(&srv.command, &srv.args) {
+                self.error = Some(format!("{name}: {reason}"));
+                continue;
+            }
+            self.plugins.mcp.insert(name.clone(), srv);
+            added.push(name);
+        }
+        if added.is_empty() {
+            return;
+        }
+        self.browser_line.clear();
+        if let Err(e) = self.plugins.save() {
+            self.error = Some(format!("could not save plugins: {e}"));
+        } else {
+            self.error = None;
+            self.status = Some(format!("Imported {} plugin(s): {}", added.len(), added.join(", ")));
+        }
+        self.refresh_available();
+        self.reconnect();
+    }
+
+    fn import_aura_mcp(&mut self) {
+        let found = config::aura_code_servers();
+        if found.is_empty() {
+            self.status = Some("No servers found in ~/.aura/mcp.json".into());
+            return;
+        }
+        let mut count = 0usize;
+        for (name, srv) in found {
+            if config::validate_mcp_command(&srv.command, &srv.args).is_ok() {
+                self.plugins.mcp.insert(name, srv);
+                count += 1;
+            }
+        }
+        if let Err(e) = self.plugins.save() {
+            self.error = Some(format!("could not save plugins: {e}"));
+        } else {
+            self.error = None;
+            self.status = Some(format!("Imported {count} server(s) from ~/.aura/mcp.json"));
+        }
+        self.refresh_available();
+        self.reconnect();
+    }
+
+    fn disable_failing_mcp(&mut self) {
+        let mut count = 0usize;
+        for name in self.mcp_errors.keys() {
+            if let Some(srv) = self.plugins.mcp.get_mut(name) {
+                if srv.enabled {
+                    srv.enabled = false;
+                    count += 1;
+                }
+            }
+        }
+        if count > 0 {
+            let _ = self.plugins.save();
+            self.status = Some(format!("Disabled {count} failing MCP server(s)"));
+            self.reconnect();
+        }
     }
 
     /// Servers already configured for other Aura agents, minus the ones here.
@@ -592,82 +751,134 @@ impl App {
         let mcp_up = self
             .mcp_status
             .iter()
-            .filter(|l| l.ends_with("connected"))
+            .filter(|l| l.contains("— connected"))
             .count();
-        let mcp_all = self.mcp_status.len();
-        format!(
-            "{} tools · {mcp_up}/{mcp_all} MCP servers",
-            self.registry.len()
-        )
+        let mcp_enabled = self.plugins.mcp.values().filter(|s| s.enabled).count();
+        if !self.mcp_connecting.is_empty() {
+            format!(
+                "{} tools · {mcp_up}/{mcp_enabled} MCP (connecting…)",
+                self.registry.len()
+            )
+        } else {
+            format!(
+                "{} tools · {mcp_up}/{mcp_enabled} MCP servers",
+                self.registry.len()
+            )
+        }
     }
 
     // ---- model factory ----------------------------------------------------
 
     /// Open the factory on the provider that owns the current model, and
-    /// start a live fetch when that provider is ready and not cached.
+    /// immediately trigger concurrent live `/models` fetches for ready providers.
     fn open_model_factory(&mut self) {
         let model_id = if self.config.model_id.trim().is_empty() {
             "deepseek-flash".to_string()
         } else {
             self.config.model_id.trim().to_string()
         };
-        self.model_factory.open_for(&model_id);
-        self.maybe_fetch_selected_model_provider();
+        self.model_factory
+            .open_for(&model_id, &self.config.custom_providers);
+        self.fetch_all_ready_models(true);
     }
 
-    fn maybe_fetch_selected_model_provider(&mut self) {
-        let id = self.model_factory.selected_provider.clone();
-        let Some(spec) = harness_core::models::provider(&id) else {
-            return;
-        };
-        if spec.live
-            && harness_core::models::is_configured(spec)
-            && !self.model_factory.live.contains_key(&id)
-            && self.model_factory.fetching.is_none()
-        {
-            self.start_model_fetch(&id);
+    fn fetch_all_ready_models(&mut self, include_locals: bool) {
+        let ids: Vec<String> = harness_core::models::PROVIDERS
+            .iter()
+            .filter(|spec| {
+                spec.live
+                    && ((!spec.local && harness_core::models::is_configured(spec))
+                        || (include_locals && spec.local))
+            })
+            .map(|spec| spec.id.to_string())
+            .collect();
+        for id in ids {
+            let report_error = harness_core::models::provider(&id)
+                .map(|s| !s.local || id == self.model_factory.selected_provider)
+                .unwrap_or(true);
+            self.start_model_fetch_inner(&id, report_error);
         }
+        let custom_ids: Vec<String> = self
+            .config
+            .custom_providers
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        for id in custom_ids {
+            self.start_model_fetch_inner(&id, true);
+        }
+        // Also ensure the currently viewed provider fetches if ready.
+        let selected = self.model_factory.selected_provider.clone();
+        self.start_model_fetch_inner(&selected, true);
     }
 
     fn start_model_fetch(&mut self, provider_id: &str) {
+        self.start_model_fetch_inner(provider_id, true);
+    }
+
+    fn start_model_fetch_inner(&mut self, provider_id: &str, report_error: bool) {
+        if self.model_factory.fetching.contains(provider_id) {
+            return;
+        }
+        if let Some(custom) = self
+            .config
+            .custom_providers
+            .iter()
+            .find(|c| c.id == provider_id)
+            .cloned()
+        {
+            let http = self.http.clone();
+            let tx = self.model_fetch_tx.clone();
+            let id = custom.id.clone();
+            self.model_factory.fetching.insert(id.clone());
+            self.model_factory.errors.remove(&id);
+            self.rt.spawn(async move {
+                let res = harness_core::models::fetch_custom_live_models(&http, &custom).await;
+                let _ = tx.send((id, report_error, res));
+            });
+            return;
+        }
         let Some(spec) = harness_core::models::provider(provider_id) else {
             return;
         };
-        if !spec.live || self.model_factory.fetching.is_some() {
+        if !spec.live || (!spec.local && spec.id != "openrouter" && !harness_core::models::is_configured(spec)) {
             return;
         }
         let http = self.http.clone();
         let id = provider_id.to_string();
-        let (tx, rx) = std_mpsc::channel();
-        self.model_fetch_rx = Some(rx);
-        self.model_factory.fetching = Some(id.clone());
-        self.model_factory.error = None;
+        let tx = self.model_fetch_tx.clone();
+        self.model_factory.fetching.insert(id.clone());
+        self.model_factory.errors.remove(&id);
         self.rt.spawn(async move {
             let result = harness_core::models::fetch_live_models(&http, spec).await;
-            let _ = tx.send((id, result));
+            let _ = tx.send((id, report_error, result));
         });
     }
 
     fn pump_model_fetch(&mut self, ctx: &egui::Context) {
-        let Some(rx) = self.model_fetch_rx.as_ref() else {
-            return;
-        };
-        let Ok((id, result)) = rx.try_recv() else {
-            return;
-        };
-        self.model_fetch_rx = None;
-        self.model_factory.fetching = None;
-        match result {
-            Ok(models) => {
-                let count = models.len();
-                self.model_factory.live.insert(id.clone(), models);
-                self.status = Some(format!("{count} live models loaded from {id}"));
-            }
-            Err(e) => {
-                self.model_factory.error = Some(format!("{id}: {e}"));
+        let mut updated = false;
+        while let Ok((id, report_error, result)) = self.model_fetch_rx.try_recv() {
+            updated = true;
+            self.model_factory.fetching.remove(&id);
+            match result {
+                Ok(models) => {
+                    let count = models.len();
+                    self.model_factory.live.insert(id.clone(), models);
+                    self.model_factory.errors.remove(&id);
+                    if self.model_factory.open && self.model_factory.selected_provider == id {
+                        self.status = Some(format!("{count} live models loaded from {id}"));
+                    }
+                }
+                Err(e) => {
+                    if report_error {
+                        self.model_factory.errors.insert(id, e);
+                    }
+                }
             }
         }
-        ctx.request_repaint();
+        if updated {
+            ctx.request_repaint();
+        }
     }
 
     fn apply_model_factory(
@@ -687,6 +898,79 @@ impl App {
             }
             ui::model_factory::ModelFactoryAction::Refresh(provider) => {
                 self.start_model_fetch(&provider);
+            }
+            ui::model_factory::ModelFactoryAction::RefreshAllReady => {
+                self.fetch_all_ready_models(true);
+            }
+            ui::model_factory::ModelFactoryAction::SaveProviderPlan {
+                provider_id,
+                api_key,
+                base_url,
+                api_key_env,
+                base_url_env,
+            } => {
+                let mut err_msg = None;
+                if !api_key.trim().is_empty() && !api_key_env.trim().is_empty() {
+                    if let Err(e) = config::save_key_named(&api_key_env, api_key.trim()) {
+                        err_msg = Some(format!("could not save {api_key_env}: {e}"));
+                    }
+                }
+                if err_msg.is_none() && !base_url_env.trim().is_empty() {
+                    let trimmed_url = base_url.trim().trim_end_matches('/');
+                    if let Err(e) = config::save_key_named(&base_url_env, trimmed_url) {
+                        err_msg = Some(format!("could not save {base_url_env}: {e}"));
+                    }
+                }
+                if let Some(e) = err_msg {
+                    self.model_factory.errors.insert(provider_id, e);
+                } else {
+                    self.model_factory.setup_api_key.clear();
+                    self.model_factory.errors.remove(&provider_id);
+                    // Refresh resolved base URL if the active model belongs to this provider.
+                    if harness_core::models::provider_for_model(&self.config.model_id) == provider_id {
+                        self.config.base_url =
+                            harness_core::provider::base_url_for(&self.config.model_id);
+                        let _ = self.config.save();
+                    }
+                    self.status = Some(if api_key.trim().is_empty() {
+                        format!("Saved endpoint for {provider_id}")
+                    } else {
+                        format!("Saved endpoint & credentials for {provider_id}")
+                    });
+                    self.start_model_fetch(&provider_id);
+                }
+            }
+            ui::model_factory::ModelFactoryAction::SaveCustomProvider { provider, api_key } => {
+                if !api_key.trim().is_empty() && !provider.api_key_env.trim().is_empty() {
+                    if let Err(e) = config::save_key_named(&provider.api_key_env, api_key.trim()) {
+                        self.error = Some(format!("could not save custom provider key: {e}"));
+                        ctx.request_repaint();
+                        return;
+                    }
+                }
+                self.config.custom_providers.retain(|c| c.id != provider.id);
+                let id = provider.id.clone();
+                let base_url = provider.base_url.clone();
+                self.config.custom_providers.push(provider);
+                harness_core::provider::set_custom_providers(self.config.custom_providers.clone());
+                if let Err(e) = self.config.save() {
+                    self.error = Some(format!("could not save config: {e}"));
+                } else {
+                    self.model_factory.selected_provider = id.clone();
+                    self.model_factory.setup_base_url = base_url;
+                    self.status = Some(format!("Saved custom provider {id}"));
+                    self.start_model_fetch(&id);
+                }
+            }
+            ui::model_factory::ModelFactoryAction::DeleteCustomProvider(id) => {
+                self.config.custom_providers.retain(|c| c.id != id);
+                harness_core::provider::set_custom_providers(self.config.custom_providers.clone());
+                self.model_factory.live.remove(&id);
+                self.model_factory.selected_provider = "deepseek".to_string();
+                self.model_factory
+                    .sync_setup_fields("deepseek", &self.config.custom_providers);
+                let _ = self.config.save();
+                self.status = Some(format!("Removed custom provider {id}"));
             }
         }
         ctx.request_repaint();
@@ -891,13 +1175,24 @@ impl App {
         if session.header.title.trim().is_empty() || session.header.title == "New chat" {
             session.header.title = title;
         }
-        let mut turn = Message::user(text);
-        turn.images = images;
-        session.messages.push(turn);
+        // Reuse trailing identical user bubble when retrying after a failed turn.
+        let same_trailing = session.messages.last().is_some_and(|m| {
+            m.role == "user" && m.content.trim() == text.trim() && m.images == images
+        });
+        if same_trailing {
+            if let Some(last) = session.messages.last_mut() {
+                last.ts = Some(chrono::Utc::now());
+            }
+        } else {
+            let mut turn = Message::user(text);
+            turn.images = images;
+            session.messages.push(turn);
+        }
 
         self.draft.clear();
         self.attachments.clear();
         self.live.clear();
+        self.live_steps.clear();
         self.cards.clear();
         self.error = None;
 
@@ -906,7 +1201,11 @@ impl App {
         // it follows the file tree's root.
         let project_dir = absolute_dir(&self.file_tree.root);
         let mut history = Vec::new();
-        let system = system_message(&self.config.system_prompt, &project_dir);
+        let combined_prompt = effective_system_prompt(
+            &self.config.agent_preset,
+            &self.config.system_prompt,
+        );
+        let system = system_message(&combined_prompt, &project_dir);
         if !system.is_empty() {
             history.push(Message::system(system));
         }
@@ -935,6 +1234,22 @@ impl App {
         if project_dir_is_usable(&project_dir) {
             registry.set_cwd(&project_dir);
         }
+        let subagent_cfg = harness_core::agent::SubagentConfig {
+            default_model_id: self.config.subagent_default_model_id.trim().to_string(),
+            profiles: self
+                .config
+                .agents
+                .iter()
+                .filter(|a| a.enabled)
+                .map(|a| harness_core::agent::SubagentProfile {
+                    id: a.id.clone(),
+                    name: a.name.clone(),
+                    brief: a.brief.clone(),
+                    model_id: a.model_id.clone(),
+                })
+                .collect(),
+            depth: 0,
+        };
         let input = LoopInput {
             http: self.http.clone(),
             api_key: key,
@@ -943,6 +1258,7 @@ impl App {
             registry,
             mcp: Arc::clone(&self.mcp),
             approvals: appr_rx,
+            subagent: Some(subagent_cfg),
         };
 
         let (tx, rx) = tokio::sync::mpsc::channel(256);
@@ -966,46 +1282,92 @@ impl App {
         if task.is_empty() {
             return;
         }
-        // Same provider routing as `send`: the selected model's key first,
-        // then the stored one.
-        let resolved_key = if !self.config.model_id.trim().is_empty() {
-            harness_core::provider::get_api_key_for_model(self.config.model_id.trim())
-        } else {
-            self.api_key.clone()
-        };
-        let Some(key) = resolved_key else {
-            self.error = Some(
-                "add an API key for your selected model in Settings (or set AURA_HOME / env vars)"
-                    .into(),
-            );
-            self.view = View::Settings;
-            return;
-        };
-        let base_url = if !self.config.model_id.trim().is_empty() {
-            harness_core::provider::base_url_for(self.config.model_id.trim())
-        } else {
-            None
-        };
         let project_dir = absolute_dir(&self.file_tree.root);
-        let base_system = system_message(&self.config.system_prompt, &project_dir);
-        let opts = ChatOptions {
-            model: if self.config.model_id.trim().is_empty() {
-                Some(self.model.into())
+        let combined_prompt = effective_system_prompt(
+            &self.config.agent_preset,
+            &self.config.system_prompt,
+        );
+        let base_system = system_message(&combined_prompt, &project_dir);
+
+        let resolve_endpoint = |override_id: &str, fallback_id: &str| -> std::result::Result<(String, ChatOptions, String), String> {
+            let chosen = if !override_id.trim().is_empty() {
+                override_id.trim()
+            } else if !fallback_id.trim().is_empty() {
+                fallback_id.trim()
             } else {
-                None
-            },
-            model_name: if self.config.model_id.trim().is_empty() {
-                None
-            } else {
-                Some(self.config.model_id.trim().to_string())
-            },
-            base_url,
-            effort: Some(self.effort.into()),
-            ..Default::default()
+                self.config.model_id.trim()
+            };
+            if chosen.is_empty() {
+                let Some(ref k) = self.api_key else {
+                    return Err("no API key configured for main model".into());
+                };
+                return Ok((
+                    k.clone(),
+                    ChatOptions {
+                        model: Some(self.model.into()),
+                        effort: Some(self.effort.into()),
+                        ..Default::default()
+                    },
+                    format!("{:?}", self.model),
+                ));
+            }
+            let key = harness_core::provider::get_api_key_for_model(chosen)
+                .or_else(|| {
+                    if chosen == self.config.model_id.trim() {
+                        self.api_key.clone()
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| format!("no API key configured for model {chosen}"))?;
+            let base_url = harness_core::provider::base_url_for(chosen);
+            let opts = ChatOptions {
+                model: None,
+                model_name: Some(chosen.to_string()),
+                base_url,
+                effort: Some(self.effort.into()),
+                ..Default::default()
+            };
+            Ok((key, opts, harness_core::models::display_name(chosen)))
         };
-        // Full tool access for the whole crew. Flipped on the clone rather than
-        // by rebuilding from `self.plugins`: a rebuild would drop the MCP tools
-        // registered into `self.registry` after the servers connected.
+
+        let (lead_key, lead_opts, lead_label) =
+            match resolve_endpoint(&self.config.lead_model_id, "") {
+                Ok(v) => v,
+                Err(msg) => {
+                    self.error = Some(msg);
+                    self.view = View::Settings;
+                    return;
+                }
+            };
+
+        let mut roster = vec![ui::members::Member::with_id(
+            "lead",
+            "Lead",
+            ui::members::CREW[0].1,
+            &lead_label,
+        )];
+        let mut specs = Vec::new();
+        for a in self.config.agents.iter().filter(|a| a.enabled) {
+            let sub_fallback = self.config.subagent_default_model_id.trim();
+            let resolved = resolve_endpoint(&a.model_id, sub_fallback);
+            let label = resolved
+                .as_ref()
+                .map(|(_, _, l)| l.clone())
+                .unwrap_or_else(|_| "unconfigured".into());
+            roster.push(ui::members::Member::with_id(&a.id, &a.name, &a.brief, &label));
+            specs.push(CrewMemberSpec {
+                id: a.id.clone(),
+                brief: a.brief.clone(),
+                resolved,
+            });
+        }
+        if specs.is_empty() {
+            self.error = Some("enable at least one subagent in the Agents panel".into());
+            return;
+        }
+
+        // Full tool access for the whole crew.
         let mut registry = self.registry.clone();
         registry.set_auto_approve(true);
         if project_dir_is_usable(&project_dir) {
@@ -1014,8 +1376,9 @@ impl App {
 
         let crew = Crew {
             http: self.http.clone(),
-            api_key: key,
-            opts,
+            lead_key,
+            lead_opts,
+            subagents: specs,
             registry,
             mcp: Arc::clone(&self.mcp),
             base_system,
@@ -1025,7 +1388,7 @@ impl App {
 
         self.error = None;
         let (tx, rx) = tokio::sync::mpsc::channel(256);
-        self.swarm.start(rx);
+        self.swarm.start_with_roster(rx, roster);
         self.rt.spawn(orchestrate(crew, tx));
         ctx.request_repaint();
     }
@@ -1139,6 +1502,9 @@ impl App {
                 self.live.clear();
                 self.persist();
             }
+            LoopEvent::StepsUpdated(steps) => {
+                self.live_steps = steps;
+            }
             LoopEvent::Finished { .. } => {
                 self.busy = false;
                 self.live.freeze_reasoning_clock();
@@ -1179,8 +1545,21 @@ impl App {
                 }
             }
             SettingsAction::SaveConfig => {
+                self.registry.set_auto_approve(self.config.auto_approve);
+                let wanted_root = if self.config.project_root.trim().is_empty() {
+                    std::path::PathBuf::from(".")
+                } else {
+                    std::path::PathBuf::from(self.config.project_root.trim())
+                };
+                if wanted_root.is_dir() && wanted_root != self.file_tree.root {
+                    self.file_tree = ui::filetree::FileTreeState::new(wanted_root.clone())
+                        .with_hidden(self.config.show_hidden_files);
+                    self.preview.force_rescan(&wanted_root);
+                }
                 if let Err(e) = self.config.save() {
                     self.error = Some(format!("could not save settings: {e}"));
+                } else {
+                    self.status = Some("Settings saved".into());
                 }
             }
             SettingsAction::SavePlugins => {
@@ -1190,7 +1569,18 @@ impl App {
                 self.reconnect();
             }
             SettingsAction::OpenModelFactory => self.open_model_factory(),
+            SettingsAction::OpenAddProvider => {
+                self.open_model_factory();
+                self.model_factory.adding_custom = true;
+            }
+            SettingsAction::OpenAgents => {
+                self.right_panel = true;
+                self.right_tab = RightTab::Members;
+                self.view = View::Chat;
+            }
             SettingsAction::OpenBrowser => self.show_browser = true,
+            SettingsAction::ImportAuraMcp => self.import_aura_mcp(),
+            SettingsAction::DisableFailing => self.disable_failing_mcp(),
             SettingsAction::RemoveServer(name) => {
                 self.plugins.mcp.remove(&name);
                 if let Err(e) = self.plugins.save() {
@@ -1230,9 +1620,14 @@ impl App {
                 self.renaming = Some(id);
             }
             SidebarAction::OpenSettings => self.view = View::Settings,
+            SidebarAction::OpenPlugins => {
+                self.right_panel = true;
+                self.right_tab = RightTab::Plugins;
+            }
             SidebarAction::Theme(choice) => {
+                // Leave `applied_theme` untouched so `layout` sees the diff
+                // and calls `theme::apply(ctx, choice)` immediately.
                 self.config.theme = choice;
-                self.applied_theme = choice;
                 if let Err(e) = self.config.save() {
                     self.error = Some(format!("could not save settings: {e}"));
                 }
@@ -1349,12 +1744,20 @@ impl App {
     }
 }
 
+#[derive(Clone)]
+struct CrewMemberSpec {
+    id: String,
+    brief: String,
+    resolved: std::result::Result<(String, ChatOptions, String), String>,
+}
+
 /// The crew's shared plumbing, cloned once per agent turn.
 #[derive(Clone)]
 struct Crew {
     http: reqwest::Client,
-    api_key: String,
-    opts: ChatOptions,
+    lead_key: String,
+    lead_opts: ChatOptions,
+    subagents: Vec<CrewMemberSpec>,
     registry: ToolRegistry,
     mcp: Arc<Mutex<BTreeMap<String, McpConnection>>>,
     base_system: String,
@@ -1368,23 +1771,23 @@ impl Crew {
     async fn turn(
         &self,
         who: usize,
+        key: String,
+        opts: ChatOptions,
         system: String,
         user: String,
         tx: &tokio::sync::mpsc::Sender<ui::members::CrewEvent>,
     ) -> String {
-        // The registry already runs in full-access mode, so nothing waits on an
-        // approval. The sender is closed rather than held open so a stray gated
-        // tool degrades to a refusal instead of stalling the crew forever.
         let (appr_tx, appr_rx) = agent::approval_channel();
         drop(appr_tx);
         let input = LoopInput {
             http: self.http.clone(),
-            api_key: self.api_key.clone(),
+            api_key: key,
             history: vec![Message::system(system), Message::user(user)],
-            opts: self.opts.clone(),
+            opts,
             registry: self.registry.clone(),
             mcp: Arc::clone(&self.mcp),
             approvals: appr_rx,
+            subagent: None,
         };
         let (loop_tx, mut loop_rx) = tokio::sync::mpsc::channel::<LoopEvent>(256);
         let handle = tokio::spawn(async move {
@@ -1414,52 +1817,60 @@ async fn emit(
     tx.send(event).await.is_ok()
 }
 
-/// Plan, dispatch, run and review one crew task.
-///
-/// The orchestrator owns the subagents: it writes each analyst's job before any
-/// of them start, and scores them afterwards. The analysts never see each other,
-/// only the job they were handed.
+/// Plan, dispatch, run and review one crew task using each member's configured model.
 async fn orchestrate(crew: Crew, tx: tokio::sync::mpsc::Sender<ui::members::CrewEvent>) {
-    use ui::members::{CrewEvent, Phase, ANALYSTS};
+    use ui::members::{CrewEvent, Phase};
 
     if !emit(&tx, CrewEvent::Phase(Phase::Planning)).await {
         return;
     }
+    let analyst_pairs: Vec<(String, String)> = crew
+        .subagents
+        .iter()
+        .map(|s| (s.id.clone(), s.brief.clone()))
+        .collect();
+    let analyst_ids: Vec<String> = crew.subagents.iter().map(|s| s.id.clone()).collect();
+
     let plan = crew
         .turn(
             0,
-            ui::members::plan_prompt(&crew.base_system),
+            crew.lead_key.clone(),
+            crew.lead_opts.clone(),
+            ui::members::plan_prompt_for(&crew.base_system, &analyst_pairs),
             crew.task.clone(),
             &tx,
         )
         .await;
-    let jobs = ui::members::parse_plan(&plan);
+    let jobs = ui::members::parse_plan_for(&plan, &analyst_ids);
 
     if !emit(&tx, CrewEvent::Phase(Phase::Dispatched)).await {
         return;
     }
-    // Dropping the JoinSet aborts what is still in it, so an early return here
-    // stops the analysts rather than leaving them running unseen.
     let mut dispatched = tokio::task::JoinSet::new();
-    for (i, (role, _)) in ANALYSTS.iter().enumerate() {
+    for (i, sub) in crew.subagents.iter().enumerate() {
         let who = i + 1;
-        // shortcut: an unparseable plan leaves `jobs` empty and every analyst
-        // gets the same generic job; tighten when a real model keeps missing the
-        // `role: job` format.
         let job = jobs
-            .get(role)
+            .get(&sub.id)
             .cloned()
             .unwrap_or_else(|| "Answer the overall task from your own role.".to_string());
         if !emit(&tx, CrewEvent::Assign(who, job.clone())).await {
             return;
         }
-        let system = ui::members::analyst_prompt(&crew.base_system, role, &crew.standing);
+        let system = ui::members::subagent_prompt(&crew.base_system, &sub.id, &sub.brief, &crew.standing);
         let user = format!(
             "Overall task: {}\n\nYour job from the orchestrator: {}",
             crew.task, job
         );
-        let (crew, tx) = (crew.clone(), tx.clone());
-        dispatched.spawn(async move { (who, crew.turn(who, system, user, &tx).await) });
+        let (crew, tx, sub) = (crew.clone(), tx.clone(), sub.clone());
+        dispatched.spawn(async move {
+            match sub.resolved {
+                Ok((key, opts, _)) => (who, crew.turn(who, key, opts, system, user, &tx).await),
+                Err(msg) => {
+                    let _ = emit(&tx, CrewEvent::Member(who, LoopEvent::Failed(msg.clone()))).await;
+                    (who, format!("[error: {msg}]"))
+                }
+            }
+        });
     }
 
     let mut reports = Vec::new();
@@ -1468,7 +1879,6 @@ async fn orchestrate(crew: Crew, tx: tokio::sync::mpsc::Sender<ui::members::Crew
             reports.push((who, answer));
         }
     }
-    // Analysts finish in whatever order they finish; the report reads in row order.
     reports.sort_by_key(|(who, _)| *who);
 
     if !emit(&tx, CrewEvent::Phase(Phase::Reviewing)).await {
@@ -1476,32 +1886,39 @@ async fn orchestrate(crew: Crew, tx: tokio::sync::mpsc::Sender<ui::members::Crew
     }
     let report = reports
         .iter()
-        .map(|(who, answer)| format!("## {}\n{}", ANALYSTS[who - 1].0, answer))
+        .map(|(who, answer)| {
+            let role = crew
+                .subagents
+                .get(*who - 1)
+                .map(|s| s.id.as_str())
+                .unwrap_or("subagent");
+            format!("## {role}\n{answer}")
+        })
         .collect::<Vec<_>>()
         .join("\n\n");
     let review = crew
         .turn(
             0,
-            ui::members::review_prompt(&crew.base_system),
+            crew.lead_key.clone(),
+            crew.lead_opts.clone(),
+            ui::members::review_prompt_for(&crew.base_system, &analyst_ids),
             format!("Task: {}\n\n{}", crew.task, report),
             &tx,
         )
         .await;
 
-    // The verdict is the orchestrator's own row, already streamed to the panel;
-    // only the scores need pulling out of it.
-    let (scores, _) = ui::members::parse_review(&review);
+    let (scores, _) = ui::members::parse_review_for(&review, &analyst_ids);
     for (role, score, reason) in &scores {
-        let Some(who) = ANALYSTS
+        let Some(who) = crew
+            .subagents
             .iter()
-            .position(|(name, _)| name == role)
+            .position(|s| &s.id == role)
             .map(|i| i + 1)
         else {
             continue;
         };
         let _ = emit(&tx, CrewEvent::Score(who, *score, reason.clone())).await;
     }
-    // The reward program: scores outlive this run and change the next one.
     ui::members::record(&scores);
     let _ = emit(&tx, CrewEvent::Phase(Phase::Done)).await;
 }
@@ -1518,10 +1935,26 @@ fn project_dir_is_usable(dir: &std::path::Path) -> bool {
 }
 
 const BASE_SYSTEM: &str = "\
-Before delivering completed work, confirm with the user that the results meet \
-their needs. For complex or creative tasks, provide progress updates and ask \
-for feedback along the way. Never finish without summarizing what was done \
-and asking if the user wants adjustments.";
+Execute tasks thoroughly using the autonomous engineering loop:
+1. For non-trivial multi-step work, maintain a live plan with `update_steps`.
+2. Batch independent `read_file`, `grep`, `glob`, and `list_files` calls in parallel, and delegate deep multi-file investigation or isolated checks to `spawn_subagent`.
+3. Verify every edit with tests, builds, or direct file inspection before reporting completion. Only state paths, symbols, and outputs actually observed.
+Never end your turn with an empty response after calling tools.";
+
+pub(crate) fn effective_system_prompt(preset: &str, custom: &str) -> String {
+    let addon = match preset.trim() {
+        "tight" => "Mode: Tight & Direct — keep responses crisp, skip filler, report exact file/line results.",
+        "research" => "Mode: Research & Audit — use spawn_subagent and parallel grep/read_file extensively before concluding; cite exact evidence.",
+        _ => "",
+    };
+    let custom = custom.trim();
+    match (addon.is_empty(), custom.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => addon.to_string(),
+        (true, false) => custom.to_string(),
+        (false, false) => format!("{addon}\n\n{custom}"),
+    }
+}
 
 /// The user's system prompt plus where the tools run, so the model does not
 /// spend tool rounds exploring to find the project.
@@ -1594,6 +2027,26 @@ fn repair_untitled_sessions() {
 /// Give a hand-typed model id the routing prefix its provider expects,
 /// unless it already carries one that routes to the same family.
 fn route_manual_model_id(provider: &str, id: &str) -> String {
+    if let Some(custom) = harness_core::provider::custom_providers()
+        .into_iter()
+        .find(|c| c.id == provider)
+    {
+        let prefix = if custom.prefix.trim().is_empty() {
+            format!("{}/", custom.id.trim())
+        } else {
+            let t = custom.prefix.trim();
+            if t.ends_with('/') {
+                t.to_string()
+            } else {
+                format!("{t}/")
+            }
+        };
+        return if id.starts_with(&prefix) {
+            id.to_string()
+        } else {
+            format!("{prefix}{id}")
+        };
+    }
     let Some(spec) = harness_core::models::provider(provider) else {
         return id.to_string();
     };

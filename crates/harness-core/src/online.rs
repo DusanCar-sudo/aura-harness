@@ -528,6 +528,72 @@ pub async fn analyze_github(url: &str, client: &reqwest::Client) -> Result<Deriv
     })
 }
 
+/// Parse pasted JSON snippets like `{"mcpServers": { "name": { "command": ..., "args": [...], "env": {...} } }}`
+/// or `{ "name": { "command": ..., "args": [...] } }` or `{ "command": ..., "args": [...] }`.
+pub fn parse_mcp_json_snippet(input: &str) -> Option<Vec<(String, config::McpServer)>> {
+    let trimmed = input.trim();
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+    let val: serde_json::Value = serde_json::from_str(trimmed).ok()?;
+    let obj = val.as_object()?;
+    if obj.get("command").and_then(|v| v.as_str()).is_some() {
+        let srv = json_to_mcp_server(obj)?;
+        let line = std::iter::once(srv.command.clone())
+            .chain(srv.args.iter().cloned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        return Some(vec![(config::derive_name(&line), srv)]);
+    }
+    let map = obj
+        .get("mcpServers")
+        .or_else(|| obj.get("servers"))
+        .and_then(|v| v.as_object())
+        .unwrap_or(obj);
+    let mut out = Vec::new();
+    for (raw_name, spec) in map {
+        let Some(spec_obj) = spec.as_object() else { continue };
+        let Some(srv) = json_to_mcp_server(spec_obj) else { continue };
+        out.push((config::normalize_name(raw_name), srv));
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+fn json_to_mcp_server(obj: &serde_json::Map<String, serde_json::Value>) -> Option<config::McpServer> {
+    let command = obj.get("command")?.as_str()?.trim().to_string();
+    if command.is_empty() {
+        return None;
+    }
+    let args = obj
+        .get("args")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let env = obj
+        .get("env")
+        .and_then(|v| v.as_object())
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let enabled = !obj
+        .get("disabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    Some(config::McpServer {
+        command,
+        args,
+        env,
+        enabled,
+    })
+}
+
 /// Find a launch command in README text. Pure — fixture-tested.
 pub fn extract_launch_line(readme: &str) -> Option<String> {
     // 1. `mcpServers`-style JSON: "command" plus its "args" array.
@@ -881,5 +947,19 @@ mod tests {
         assert!(entries[0].detail().contains("Developer Tools"));
         let gh = parse_github_search_json(GITHUB_FIXTURE);
         assert!(gh[0].detail().contains("★16"));
+    }
+
+    #[test]
+    fn parses_pasted_mcp_json_snippets() {
+        let snippet = r#"{
+            "mcpServers": {
+                "aura-chrome": { "command": "node", "args": ["/opt/server.mjs"] },
+                "exa": { "command": "npx", "args": ["-y", "exa-mcp-server"], "env": { "EXA_API_KEY": "k" } }
+            }
+        }"#;
+        let parsed = parse_mcp_json_snippet(snippet).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert!(parsed.iter().any(|(n, s)| n == "aura_chrome" && s.command == "node"));
+        assert!(parsed.iter().any(|(n, s)| n == "exa" && s.env.get("EXA_API_KEY").map(String::as_str) == Some("k")));
     }
 }

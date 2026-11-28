@@ -13,6 +13,10 @@
 //! vendors whose bare model names they carry, so a prefixed id reaches the
 //! reseller rather than the vendor's own API.
 
+use std::sync::RwLock;
+
+use crate::config::CustomProvider;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TransportClass {
     Anthropic,
@@ -37,17 +41,64 @@ pub struct ProviderDescriptor {
 
 pub const ZHIPU_GENERAL_BASE_URL: &str = "https://api.z.ai/api/paas/v4";
 pub const ZHIPU_CODING_BASE_URL: &str = "https://api.z.ai/api/coding/paas/v4";
+pub const ALIBABA_CODING_BASE_URL: &str = "https://coding-intl.dashscope.aliyuncs.com/v1";
+pub const OPENCODE_ZEN_BASE_URL: &str = "https://opencode.ai/zen/v1";
+pub const OPENCODE_GO_BASE_URL: &str = "https://opencode.ai/zen/go/v1";
+pub const KIMI_PAYG_BASE_URL: &str = "https://api.moonshot.ai/v1";
+pub const KIMI_CODING_BASE_URL: &str = "https://api.kimi.com/coding/v1";
+
+static CUSTOM_PROVIDERS: RwLock<Vec<CustomProvider>> = RwLock::new(Vec::new());
+
+/// Replace the runtime custom-provider registry (synced from `Config`).
+pub fn set_custom_providers(providers: Vec<CustomProvider>) {
+    if let Ok(mut guard) = CUSTOM_PROVIDERS.write() {
+        *guard = providers;
+    }
+}
+
+/// Snapshot the registered custom providers.
+pub fn custom_providers() -> Vec<CustomProvider> {
+    CUSTOM_PROVIDERS
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
+
+fn custom_for_model(model_id: &str) -> Option<CustomProvider> {
+    let lower = model_id.to_lowercase();
+    let list = CUSTOM_PROVIDERS.read().ok()?;
+    list.iter()
+        .find(|p| {
+            let prefix = normalized_custom_prefix(p);
+            !prefix.is_empty() && lower.starts_with(&prefix.to_lowercase())
+        })
+        .cloned()
+}
+
+fn normalized_custom_prefix(p: &CustomProvider) -> String {
+    let raw = if p.prefix.trim().is_empty() {
+        format!("{}/", p.id.trim())
+    } else {
+        let trimmed = p.prefix.trim();
+        if trimmed.ends_with('/') {
+            trimmed.to_string()
+        } else {
+            format!("{trimmed}/")
+        }
+    };
+    raw
+}
 
 pub const KNOWN_PROVIDERS: &[ProviderDescriptor] = &[
     // ── Resellers first ────────────────────────────────────────────────────
     ProviderDescriptor {
         family: "opencode",
         display_name: "OpenCode Zen / Go",
-        prefixes: &["go-anthropic/", "opencode/", "zen/"],
+        prefixes: &["go-anthropic/", "opencode-go/", "opencode/", "zen/"],
         bare_prefixes: &[],
         api_key_env: &["OPENCODE_API_KEY", "OPENCODE_GO_API_KEY"],
         transport: TransportClass::OpenAiCompatible,
-        base_url: Some("https://opencode.ai/zen/v1"),
+        base_url: Some(OPENCODE_ZEN_BASE_URL),
         base_url_env: &["OPENCODE_BASE_URL"],
         model_strip: true,
     },
@@ -156,12 +207,12 @@ pub const KNOWN_PROVIDERS: &[ProviderDescriptor] = &[
     ProviderDescriptor {
         family: "kimi",
         display_name: "Kimi / Moonshot",
-        prefixes: &["kimi/"],
+        prefixes: &["kimi-coding/", "kimi/"],
         bare_prefixes: &[],
         api_key_env: &["MOONSHOT_API_KEY", "KIMI_API_KEY"],
         transport: TransportClass::OpenAiCompatible,
-        base_url: Some("https://api.moonshot.ai/v1"),
-        base_url_env: &["MOONSHOT_BASE_URL"],
+        base_url: Some(KIMI_PAYG_BASE_URL),
+        base_url_env: &["MOONSHOT_BASE_URL", "KIMI_BASE_URL"],
         model_strip: true,
     },
     ProviderDescriptor {
@@ -303,8 +354,30 @@ pub const KNOWN_PROVIDERS: &[ProviderDescriptor] = &[
         bare_prefixes: &[],
         api_key_env: &["ALIBABA_API_KEY"],
         transport: TransportClass::OpenAiCompatible,
-        base_url: Some("https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+        base_url: Some(ALIBABA_CODING_BASE_URL),
         base_url_env: &["ALIBABA_BASE_URL"],
+        model_strip: true,
+    },
+    ProviderDescriptor {
+        family: "inception",
+        display_name: "Inception",
+        prefixes: &["inception/"],
+        bare_prefixes: &["mercury-"],
+        api_key_env: &["INCEPTION_API_KEY"],
+        transport: TransportClass::OpenAiCompatible,
+        base_url: Some("https://api.inceptionlabs.ai/v1"),
+        base_url_env: &["INCEPTION_BASE_URL"],
+        model_strip: true,
+    },
+    ProviderDescriptor {
+        family: "nebius",
+        display_name: "Nebius AI Studio",
+        prefixes: &["nebius/"],
+        bare_prefixes: &[],
+        api_key_env: &["NEBIUS_API_KEY"],
+        transport: TransportClass::OpenAiCompatible,
+        base_url: Some("https://api.studio.nebius.ai/v1"),
+        base_url_env: &["NEBIUS_BASE_URL"],
         model_strip: true,
     },
     ProviderDescriptor {
@@ -375,6 +448,17 @@ pub const KNOWN_PROVIDERS: &[ProviderDescriptor] = &[
     },
     // ── Local backends ─────────────────────────────────────────────────────
     ProviderDescriptor {
+        family: "aura-local",
+        display_name: "Aura Local Model",
+        prefixes: &["aura-local/"],
+        bare_prefixes: &["lfm3-1.7b-aura", "lfm2.5-1.2b-aura", "gemma-archimedes"],
+        api_key_env: &[],
+        transport: TransportClass::OpenAiCompatible,
+        base_url: Some("http://127.0.0.1:1234/v1"),
+        base_url_env: &["AURA_LOCAL_BASE_URL", "LMSTUDIO_BASE_URL"],
+        model_strip: true,
+    },
+    ProviderDescriptor {
         family: "ollama",
         display_name: "Ollama (local)",
         prefixes: &["ollama/", "ollama:"],
@@ -392,7 +476,7 @@ pub const KNOWN_PROVIDERS: &[ProviderDescriptor] = &[
         bare_prefixes: &[],
         api_key_env: &[],
         transport: TransportClass::OpenAiCompatible,
-        base_url: Some("http://localhost:1234/v1"),
+        base_url: Some("http://127.0.0.1:1234/v1"),
         base_url_env: &["LMSTUDIO_BASE_URL"],
         model_strip: true,
     },
@@ -416,15 +500,42 @@ fn claims(desc: &ProviderDescriptor, model: &str) -> bool {
 }
 
 pub fn detect_provider_kind(model_id: &str) -> TransportClass {
+    if custom_for_model(model_id).is_some() {
+        return TransportClass::OpenAiCompatible;
+    }
     descriptor_for(model_id)
         .map(|d| d.transport)
         .unwrap_or(TransportClass::OpenAiCompatible)
 }
 
 pub fn provider_family(model_id: &str) -> &'static str {
+    if let Some(c) = custom_for_model(model_id) {
+        // Leak-free static lookup isn't needed for built-ins; for custom
+        // providers return a leaked stable id once per unique custom id or
+        // match `custom`.
+        return intern_custom_id(&c.id);
+    }
     descriptor_for(model_id)
         .map(|d| d.family)
         .unwrap_or("generic")
+}
+
+fn intern_custom_id(id: &str) -> &'static str {
+    static INTERNED: RwLock<Vec<&'static str>> = RwLock::new(Vec::new());
+    if let Ok(read) = INTERNED.read() {
+        if let Some(&s) = read.iter().find(|&&s| s == id) {
+            return s;
+        }
+    }
+    if let Ok(mut write) = INTERNED.write() {
+        if let Some(&s) = write.iter().find(|&&s| s == id) {
+            return s;
+        }
+        let leaked: &'static str = Box::leak(id.to_string().into_boxed_str());
+        write.push(leaked);
+        return leaked;
+    }
+    "custom"
 }
 
 pub fn descriptor_for(model_id: &str) -> Option<&'static ProviderDescriptor> {
@@ -437,33 +548,85 @@ pub fn api_env_for(model_id: &str) -> Option<&'static str> {
 }
 
 pub fn get_api_key_for_model(model_id: &str) -> Option<String> {
+    if let Some(c) = custom_for_model(model_id) {
+        if c.api_key_env.trim().is_empty() {
+            return Some("custom".to_string());
+        }
+        return crate::config::load_api_key_named(c.api_key_env.trim());
+    }
     let desc = descriptor_for(model_id)?;
+    let lower = model_id.to_lowercase();
+    if desc.family == "opencode"
+        && (lower.starts_with("go-anthropic/") || lower.starts_with("opencode-go/"))
+    {
+        for env_name in ["OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"] {
+            if let Some(key) = crate::config::load_api_key_named(env_name) {
+                return Some(key);
+            }
+        }
+        return None;
+    }
     for env_name in desc.api_key_env {
         if let Some(key) = crate::config::load_api_key_named(env_name) {
             return Some(key);
         }
     }
+    if desc.api_key_env.is_empty() {
+        return Some("local".to_string());
+    }
     None
 }
 
-/// Default endpoint for a model, honouring `<X>_BASE_URL` overrides and the
-/// two providers whose endpoint depends on the model or the key.
+/// Default endpoint for a model, honouring `<X>_BASE_URL` overrides (from
+/// `keys.json`, env, and `.env`) and providers whose endpoint depends on the
+/// model or key plan.
 pub fn base_url_for(model_id: &str) -> Option<String> {
+    if let Some(c) = custom_for_model(model_id) {
+        let base = c.base_url.trim().trim_end_matches('/');
+        if !base.is_empty() {
+            return Some(base.to_string());
+        }
+    }
     let desc = descriptor_for(model_id)?;
     let model = model_id.to_lowercase();
 
     // Zhipu's Coding Plan has its own host and quota.
     if desc.family == "zhipu" && model.starts_with("zhipu-coding/") {
-        if let Ok(url) = std::env::var("ZHIPU_BASE_URL") {
-            if !url.trim().is_empty() {
-                return Some(url.trim().trim_end_matches('/').to_string());
+        if let Some(url) = crate::config::load_api_key_named("ZHIPU_CODING_BASE_URL") {
+            let url = url.trim().trim_end_matches('/');
+            if !url.is_empty() {
+                return Some(url.to_string());
             }
         }
         return Some(ZHIPU_CODING_BASE_URL.to_string());
     }
 
+    // OpenCode Go subscription gateway vs OpenCode Zen PAYG gateway.
+    if desc.family == "opencode"
+        && (model.starts_with("go-anthropic/") || model.starts_with("opencode-go/"))
+    {
+        if let Some(url) = crate::config::load_api_key_named("OPENCODE_GO_BASE_URL") {
+            let url = url.trim().trim_end_matches('/');
+            if !url.is_empty() {
+                return Some(url.to_string());
+            }
+        }
+        return Some(OPENCODE_GO_BASE_URL.to_string());
+    }
+
+    // Kimi Coding Plan endpoint vs Moonshot PAYG.
+    if desc.family == "kimi" && model.starts_with("kimi-coding/") {
+        if let Some(url) = crate::config::load_api_key_named("KIMI_CODING_BASE_URL") {
+            let url = url.trim().trim_end_matches('/');
+            if !url.is_empty() {
+                return Some(url.to_string());
+            }
+        }
+        return Some(KIMI_CODING_BASE_URL.to_string());
+    }
+
     for env_name in desc.base_url_env {
-        if let Ok(url) = std::env::var(env_name) {
+        if let Some(url) = crate::config::load_api_key_named(env_name) {
             let url = url.trim().trim_end_matches('/');
             if !url.is_empty() {
                 // OLLAMA_HOST is a bare host:port; everything else is a URL.
@@ -494,9 +657,24 @@ pub fn base_url_for(model_id: &str) -> Option<String> {
 /// through untouched.
 pub fn strip_routing_prefix(model_id: &str) -> &str {
     let model = model_id.to_lowercase();
+    if let Some(c) = custom_for_model(model_id) {
+        let prefix = normalized_custom_prefix(&c).to_lowercase();
+        if model.starts_with(&prefix) && model_id.len() >= prefix.len() {
+            return &model_id[prefix.len()..];
+        }
+    }
     // Ollama's older `name:tag` shorthand selects the provider but is not part
     // of the model id the server expects.
     if let Some(rest) = model_id.strip_prefix("ollama:") {
+        return rest;
+    }
+    // OpenRouter meta-routers (`openrouter/free`, `openrouter/auto`) keep
+    // their `openrouter/` namespace on the wire unless double-prefixed.
+    if model.starts_with("openrouter/") {
+        let rest = &model_id["openrouter/".len()..];
+        if !rest.contains('/') && !rest.is_empty() {
+            return model_id;
+        }
         return rest;
     }
     let mut prefixes: Vec<&str> = KNOWN_PROVIDERS
@@ -542,6 +720,9 @@ mod tests {
         assert_eq!(strip_routing_prefix("zhipu-coding/glm-5.2"), "glm-5.2");
         assert_eq!(strip_routing_prefix("go-anthropic/claude-opus-5"), "claude-opus-5");
         assert_eq!(strip_routing_prefix("ollama:llama3.1"), "llama3.1");
+        assert_eq!(strip_routing_prefix("openrouter/free"), "openrouter/free");
+        assert_eq!(strip_routing_prefix("openrouter/auto"), "openrouter/auto");
+        assert_eq!(strip_routing_prefix("openrouter/openrouter/free"), "openrouter/free");
     }
 
     #[test]
@@ -551,10 +732,35 @@ mod tests {
         assert_eq!(detect_provider_kind("claude/sonnet"), TransportClass::Anthropic);
         assert_eq!(detect_provider_kind("gpt-4o"), TransportClass::OpenAiCompatible);
         assert_eq!(detect_provider_kind("openrouter/x"), TransportClass::OpenAiCompatible);
+        assert_eq!(detect_provider_kind("aura-local/lfm3-1.7b-aura-grounded"), TransportClass::OpenAiCompatible);
+    }
+
+    #[test]
+    fn local_models_resolve_keyless_and_default_1234() {
+        let _lock = crate::env_lock::guard();
+        let dir = std::env::temp_dir().join(format!("aura-local-{}", uuid::Uuid::new_v4()));
+        std::env::set_var("AURA_HARNESS_HOME", &dir);
+        std::env::set_var("AURA_HOME", dir.join("aura"));
+        assert_eq!(provider_family("aura-local/lfm3-1.7b-aura-grounded"), "aura-local");
+        assert_eq!(provider_family("lmstudio/liquid/lfm2.5-1.2b"), "lmstudio");
+        assert_eq!(strip_routing_prefix("aura-local/lfm3-1.7b-aura-grounded"), "lfm3-1.7b-aura-grounded");
+        assert_eq!(strip_routing_prefix("lmstudio/liquid/lfm2.5-1.2b"), "liquid/lfm2.5-1.2b");
+        assert!(get_api_key_for_model("aura-local/lfm3-1.7b-aura-grounded").is_some());
+        assert!(get_api_key_for_model("lmstudio/liquid/lfm2.5-1.2b").is_some());
+        assert_eq!(
+            base_url_for("aura-local/lfm3-1.7b-aura-grounded").as_deref(),
+            Some("http://127.0.0.1:1234/v1")
+        );
+        std::env::remove_var("AURA_HARNESS_HOME");
+        std::env::remove_var("AURA_HOME");
     }
 
     #[test]
     fn zhipu_coding_endpoint_is_distinct() {
+        let _lock = crate::env_lock::guard();
+        let dir = std::env::temp_dir().join(format!("aura-zhipu-{}", uuid::Uuid::new_v4()));
+        std::env::set_var("AURA_HARNESS_HOME", &dir);
+        std::env::set_var("AURA_HOME", dir.join("aura"));
         assert_eq!(
             base_url_for("zhipu-coding/glm-5.2").as_deref(),
             Some(ZHIPU_CODING_BASE_URL)
@@ -563,5 +769,7 @@ mod tests {
             base_url_for("glm-5.2").as_deref(),
             Some(ZHIPU_GENERAL_BASE_URL)
         );
+        std::env::remove_var("AURA_HARNESS_HOME");
+        std::env::remove_var("AURA_HOME");
     }
 }

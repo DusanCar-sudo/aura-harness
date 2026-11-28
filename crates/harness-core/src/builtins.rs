@@ -25,6 +25,8 @@ pub enum BuiltinTool {
     ListFiles,
     Grep,
     Glob,
+    UpdateSteps,
+    SpawnSubagent,
 }
 
 impl BuiltinTool {
@@ -37,6 +39,8 @@ impl BuiltinTool {
             BuiltinTool::ListFiles => "list_files",
             BuiltinTool::Grep => "grep",
             BuiltinTool::Glob => "glob",
+            BuiltinTool::UpdateSteps => "update_steps",
+            BuiltinTool::SpawnSubagent => "spawn_subagent",
         }
     }
 
@@ -48,7 +52,7 @@ impl BuiltinTool {
         )
     }
 
-    pub fn all() -> [BuiltinTool; 7] {
+    pub fn all() -> [BuiltinTool; 9] {
         [
             BuiltinTool::Shell,
             BuiltinTool::ReadFile,
@@ -57,6 +61,8 @@ impl BuiltinTool {
             BuiltinTool::ListFiles,
             BuiltinTool::Grep,
             BuiltinTool::Glob,
+            BuiltinTool::UpdateSteps,
+            BuiltinTool::SpawnSubagent,
         ]
     }
 
@@ -77,6 +83,8 @@ impl BuiltinTool {
             BuiltinTool::ListFiles => "List files and directories (optionally recursive).",
             BuiltinTool::Grep => "Search file contents for a regex pattern.",
             BuiltinTool::Glob => "Find files whose path matches a glob pattern (*, ?, **).",
+            BuiltinTool::UpdateSteps => "Publish or update your live execution checklist (2-8 ordered steps with status: pending, in_progress, done, skipped, or failed).",
+            BuiltinTool::SpawnSubagent => "Delegate an independent research or verification subtask to a focused subagent (optionally specifying role or model_id) and return its concise findings.",
         }
     }
 
@@ -142,6 +150,36 @@ impl BuiltinTool {
                 },
                 "required": ["pattern"],
             }),
+            BuiltinTool::UpdateSteps => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "steps": {
+                        "type": "array",
+                        "description": "Full ordered checklist of steps.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": str_prop("Short imperative step title"),
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["pending", "in_progress", "done", "skipped", "failed"],
+                                }
+                            },
+                            "required": ["title", "status"],
+                        }
+                    }
+                },
+                "required": ["steps"],
+            }),
+            BuiltinTool::SpawnSubagent => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "task": str_prop("Self-contained subtask brief and what verified output to return."),
+                    "role": str_prop("Optional role name or agent profile id (e.g. Research Analyst)."),
+                    "model_id": str_prop("Optional model id override; defaults to configured subagent model."),
+                },
+                "required": ["task"],
+            }),
         }
     }
 
@@ -199,6 +237,17 @@ impl BuiltinTool {
             BuiltinTool::Glob => {
                 glob_files(cwd, get("pattern").unwrap_or(""), get("path").unwrap_or(".")).await
             }
+            BuiltinTool::UpdateSteps => {
+                let count = args
+                    .get("steps")
+                    .and_then(Value::as_array)
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                Ok(format!("Checklist updated ({count} steps)."))
+            }
+            BuiltinTool::SpawnSubagent => Err(Error::Invalid(
+                "spawn_subagent must be executed through the agent loop".into(),
+            )),
         }
     }
 }

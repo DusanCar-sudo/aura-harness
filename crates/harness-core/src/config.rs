@@ -8,6 +8,59 @@ use crate::api::{Model, ReasoningEffort};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomProvider {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub plan: String,
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key_env: String,
+    #[serde(default)]
+    pub prefix: String,
+    #[serde(default)]
+    pub default_model: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentMemberConfig {
+    pub id: String,
+    pub name: String,
+    pub brief: String,
+    /// Empty string means follow the main composer model.
+    #[serde(default)]
+    pub model_id: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+pub fn default_agents() -> Vec<AgentMemberConfig> {
+    vec![
+        AgentMemberConfig {
+            id: "research-analyst".into(),
+            name: "Research Analyst".into(),
+            brief: "You are a research analyst. Establish the facts: what already exists, what the documentation says, and what is already solved. Be specific.".into(),
+            model_id: String::new(),
+            enabled: true,
+        },
+        AgentMemberConfig {
+            id: "risk-analyst".into(),
+            name: "Risk Analyst".into(),
+            brief: "You are a risk analyst. Name what can go wrong: failure modes, security holes, data loss, edge cases, and the cost of being wrong.".into(),
+            model_id: String::new(),
+            enabled: true,
+        },
+        AgentMemberConfig {
+            id: "critic-analyst".into(),
+            name: "Critic Analyst".into(),
+            brief: "You are a critic. Attack the obvious answer: what the task is missing, what it assumes that may be false, and what the simpler alternative is.".into(),
+            model_id: String::new(),
+            enabled: true,
+        },
+    ]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -44,6 +97,21 @@ pub struct Config {
     pub auto_approve: bool,
     #[serde(default)]
     pub system_prompt: String,
+    /// Selected persona preset in Agent Setup ("agy", "tight", "research", "custom").
+    #[serde(default)]
+    pub agent_preset: String,
+    /// Optional model override for the lead orchestrator agent (empty = follow main model).
+    #[serde(default)]
+    pub lead_model_id: String,
+    /// Optional default model override for subagents (empty = follow main model).
+    #[serde(default)]
+    pub subagent_default_model_id: String,
+    /// Configurable subagents for the Agents crew.
+    #[serde(default = "default_agents")]
+    pub agents: Vec<AgentMemberConfig>,
+    /// User-added providers (Coding Plan / PAYG / Custom OpenAI-compatible).
+    #[serde(default)]
+    pub custom_providers: Vec<CustomProvider>,
     /// Voice used for text-to-speech. MiMo voices (mimo_default, Mia, …) are
     /// accepted by MiMo TTS; a long opaque id is treated as an ElevenLabs id.
     #[serde(default = "default_tts_voice")]
@@ -95,6 +163,11 @@ impl Default for Config {
             show_hidden_files: false,
             auto_approve: default_auto_approve(),
             system_prompt: String::new(),
+            agent_preset: String::new(),
+            lead_model_id: String::new(),
+            subagent_default_model_id: String::new(),
+            agents: default_agents(),
+            custom_providers: Vec::new(),
             tts_voice: default_tts_voice(),
             agentmem_mirror: true,
             disk_bytes: String::new(),
@@ -149,11 +222,11 @@ impl ThemeChoice {
             ThemeChoice::Nature,
             ThemeChoice::Midnight,
             ThemeChoice::ChatGpt,
-            ThemeChoice::Retro,
-            ThemeChoice::Paper,
             ThemeChoice::Ember,
             ThemeChoice::Ocean,
             ThemeChoice::Dracula,
+            ThemeChoice::Retro,
+            ThemeChoice::Paper,
             ThemeChoice::Solarized,
             ThemeChoice::Graphite,
         ]
@@ -193,7 +266,10 @@ impl ThemeChoice {
 
     /// True for the light themes (the picker groups them after the dark ones).
     pub fn is_dark(self) -> bool {
-        !matches!(self, ThemeChoice::Solarized | ThemeChoice::Graphite)
+        !matches!(
+            self,
+            ThemeChoice::Paper | ThemeChoice::Solarized | ThemeChoice::Graphite
+        )
     }
 }
 
@@ -543,12 +619,17 @@ pub fn load_api_key_named(key_name: &str) -> Option<String> {
     if let Some(v) = load_dotenv().get(key_name) {
         if !v.trim().is_empty() { return Some(v.clone()); }
     }
-    // Legacy path: ~/.config/aura-harness/credentials (uses api_key= prefix)
+    // Legacy path: ~/.config/aura-harness/credentials (uses api_key= prefix for DeepSeek only)
     let path = config_dir().join("credentials");
     if let Ok(text) = std::fs::read_to_string(path) {
         for line in text.lines() {
-            // Match "api_key=" (legacy) OR "{key_name}=" (newer convention).
-            let legacy = line.strip_prefix("api_key=").map(|v| v.trim());
+            // Only fall back to bare `api_key=` for the historical DeepSeek key,
+            // never for other providers or `*_BASE_URL` overrides.
+            let legacy = if key_name == "DEEPSEEK_API_KEY" {
+                line.strip_prefix("api_key=").map(|v| v.trim())
+            } else {
+                None
+            };
             let named = line.strip_prefix(&format!("{}=", key_name)).map(|v| v.trim());
             for v in [legacy, named].into_iter().flatten() {
                 if !v.is_empty() { return Some(v.to_string()); }
@@ -561,6 +642,56 @@ pub fn load_api_key_named(key_name: &str) -> Option<String> {
 /// Backward-compatible alias for load_api_key_named("DEEPSEEK_API_KEY").
 pub fn load_api_key() -> Option<String> {
     load_api_key_named("DEEPSEEK_API_KEY")
+}
+
+/// Atomically persist an env-style key or endpoint override into `~/.aura/keys.json`
+/// with 0600 permissions. Passing an empty value removes that entry.
+pub fn save_key_named(key_name: &str, value: &str) -> std::io::Result<()> {
+    let key_name = key_name.trim();
+    if key_name.is_empty() {
+        return Ok(());
+    }
+    let dir = aura_home();
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("keys.json");
+    let mut map: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        map.remove(key_name);
+    } else {
+        map.insert(
+            key_name.to_string(),
+            serde_json::Value::String(trimmed.to_string()),
+        );
+    }
+
+    let text = serde_json::to_string_pretty(&serde_json::Value::Object(map))
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let tmp = dir.join(".keys.json.tmp");
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        f.write_all(text.as_bytes())?;
+        f.flush()?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&tmp, &text)?;
+    }
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
 }
 
 /// Universal config.json loading from ~/.aura/config.json.
@@ -720,6 +851,76 @@ fn mnemai_launcher() -> Option<String> {
     let home = std::env::var("HOME").ok()?;
     let path = PathBuf::from(home).join(".local/bin/mnemai");
     path.exists().then(|| path.display().to_string())
+}
+
+/// Auto-attach the local `aura-chrome` MCP bridge when installed on the machine
+/// (or declared in `~/.aura/mcp.json`), unless already configured.
+pub fn with_chrome_plugin(mut plugins: Plugins) -> Plugins {
+    if plugins.mcp.contains_key("aura_chrome") || plugins.mcp.contains_key("aura-chrome") {
+        return plugins;
+    }
+    if let Some((name, server)) = detect_chrome_server() {
+        plugins.mcp.insert(name, server);
+    }
+    plugins
+}
+
+/// Find the runnable `aura-chrome` MCP bridge on this machine.
+pub fn detect_chrome_server() -> Option<(String, McpServer)> {
+    for (name, server) in aura_code_servers() {
+        if name == "aura_chrome" || name == "aura-chrome" {
+            let arg_exists = server
+                .args
+                .first()
+                .map(|p| Path::new(p).is_file())
+                .unwrap_or(true);
+            if arg_exists {
+                return Some(("aura_chrome".into(), server));
+            }
+        }
+    }
+    for candidate in [
+        "/mnt/bigdata/aura-chrome/bridge/server.mjs",
+        "/mnt/bigdata/projects/aura-chrome/bridge/mcp.js",
+    ] {
+        if Path::new(candidate).is_file() {
+            return Some((
+                "aura_chrome".into(),
+                McpServer {
+                    command: "node".into(),
+                    args: vec![candidate.into()],
+                    env: Default::default(),
+                    enabled: true,
+                },
+            ));
+        }
+    }
+    None
+}
+
+/// Reject launch commands that are clearly pasted docs, shell pipelines, comments,
+/// or URLs rather than a stdio MCP executable.
+pub fn validate_mcp_command(command: &str, args: &[String]) -> std::result::Result<(), String> {
+    let cmd = command.trim();
+    if cmd.is_empty() {
+        return Err("MCP command cannot be empty".into());
+    }
+    if cmd.starts_with('#') {
+        return Err("That looks like a shell comment (`# ...`), not an MCP command".into());
+    }
+    if cmd.starts_with("http://") || cmd.starts_with("https://") {
+        return Err("That is a URL, not a stdio MCP launch command".into());
+    }
+    if args.iter().any(|a| a == "|") {
+        return Err("Shell pipelines (`|`) are not valid MCP stdio commands".into());
+    }
+    if matches!(cmd, "npx" | "uvx" | "bunx") && args.iter().all(|a| a.starts_with('-')) {
+        return Err(format!("`{cmd}` needs a package name argument"));
+    }
+    if cmd == "claude" && args.first().map(String::as_str) == Some("plugin") {
+        return Err("`claude plugin install` is a CLI installer, not an MCP server".into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -959,5 +1160,51 @@ mod tests {
         std::env::remove_var("AURA_HARNESS_HOME");
         std::env::remove_var("AURA_HOME");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn validates_mcp_launch_commands_and_named_keys() {
+        assert!(validate_mcp_command("#", &["comment".into()]).is_err());
+        assert!(validate_mcp_command("https://github.com/a/b", &[]).is_err());
+        assert!(validate_mcp_command("curl", &["|".into(), "bash".into()]).is_err());
+        assert!(validate_mcp_command("npx", &["-y".into()]).is_err());
+        assert!(validate_mcp_command("claude", &["plugin".into(), "install".into()]).is_err());
+        assert!(validate_mcp_command("npx", &["-y".into(), "pkg-mcp".into()]).is_ok());
+
+        let _lock = crate::env_lock::guard();
+        let prev_ds = std::env::var_os("DEEPSEEK_API_KEY");
+        let prev_zhipu = std::env::var_os("ZHIPU_CODING_BASE_URL");
+        let prev_ali = std::env::var_os("ALIBABA_API_KEY");
+        std::env::remove_var("DEEPSEEK_API_KEY");
+        std::env::remove_var("ZHIPU_CODING_BASE_URL");
+        std::env::remove_var("ALIBABA_API_KEY");
+        let dir = std::env::temp_dir().join(format!("aura-keys-{}", uuid::Uuid::new_v4()));
+        std::env::set_var("AURA_HARNESS_HOME", dir.join("cfg"));
+        std::env::set_var("AURA_HOME", dir.join("aura"));
+        store_api_key("sk-legacy-ds").unwrap();
+        // Legacy DeepSeek credentials file must NOT satisfy other env keys or BASE_URLs.
+        assert_eq!(load_api_key_named("DEEPSEEK_API_KEY").as_deref(), Some("sk-legacy-ds"));
+        assert_eq!(load_api_key_named("ZHIPU_CODING_BASE_URL"), None);
+
+        save_key_named("ALIBABA_API_KEY", "sk-ali-test").unwrap();
+        assert_eq!(load_api_key_named("ALIBABA_API_KEY").as_deref(), Some("sk-ali-test"));
+        save_key_named("ALIBABA_API_KEY", "").unwrap();
+        assert_eq!(load_api_key_named("ALIBABA_API_KEY"), None);
+
+        std::env::remove_var("AURA_HARNESS_HOME");
+        std::env::remove_var("AURA_HOME");
+        match prev_ds {
+            Some(v) => std::env::set_var("DEEPSEEK_API_KEY", v),
+            None => std::env::remove_var("DEEPSEEK_API_KEY"),
+        }
+        match prev_zhipu {
+            Some(v) => std::env::set_var("ZHIPU_CODING_BASE_URL", v),
+            None => std::env::remove_var("ZHIPU_CODING_BASE_URL"),
+        }
+        match prev_ali {
+            Some(v) => std::env::set_var("ALIBABA_API_KEY", v),
+            None => std::env::remove_var("ALIBABA_API_KEY"),
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -18,6 +18,8 @@ use harness_core::online::{self, OnlineEntry, Source};
 pub enum BrowserAction {
     /// Add from a known name + launch line (catalogue, machine, manual).
     Add { name: String, line: String },
+    /// Import one or more servers from pasted `mcpServers` JSON.
+    AddJson(Vec<(String, config::McpServer)>),
     /// Analyze a GitHub repo URL, derive its launch line, add automatically.
     Analyze(String),
     /// Open an external URL in the system browser (directory entries).
@@ -35,7 +37,8 @@ pub struct OnlineResults {
 
 pub struct BrowserState<'a> {
     pub query: &'a mut String,
-    /// The manual launch line, e.g. `npx -y rea-agents mcp` — or a GitHub URL.
+    pub category: &'a mut String,
+    /// The manual launch line, e.g. `npx -y rea-agents mcp`, a GitHub URL, or JSON.
     pub line: &'a mut String,
     pub available: &'a [AvailableServer],
     /// Names already configured, so they are not offered twice.
@@ -53,24 +56,44 @@ pub fn show(ui: &mut Ui, state: &mut BrowserState<'_>) -> Option<BrowserAction> 
         ui,
         state.query,
         crate::ui::TextEditSpec::singleline()
-            .hint("Search — game dev, memory, fetch, github…")
+            .hint("Search MCP plugins — chrome, memory, db, playwright, github…")
             .width(f32::INFINITY),
     );
-    ui.add_space(6.0);
+    ui.add_space(4.0);
+
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .selectable_label(state.category.is_empty(), "All")
+            .clicked()
+        {
+            state.category.clear();
+        }
+        for &cat in catalog::categories() {
+            let selected = state.category == cat;
+            if ui.selectable_label(selected, cat).clicked() {
+                *state.category = cat.to_string();
+            }
+        }
+    });
+    ui.add_space(4.0);
 
     let q = state.query.trim().to_lowercase();
 
     // ---- already on this machine ------------------------------------------
-    let machine: Vec<&AvailableServer> = state
-        .available
-        .iter()
-        .filter(|s| q.is_empty() || s.name.contains(&q) || s.summary().to_lowercase().contains(&q))
-        .collect();
+    let machine: Vec<&AvailableServer> = if state.category.is_empty() {
+        state
+            .available
+            .iter()
+            .filter(|s| q.is_empty() || s.name.contains(&q) || s.summary().to_lowercase().contains(&q))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let machine_empty = machine.is_empty();
     if !machine.is_empty() {
         ui.label(
-            RichText::new("On this machine")
-                .color(theme::text())
+            RichText::new("Detected on this machine (~/.aura/mcp.json)")
+                .color(theme::ok())
                 .strong(),
         );
         for server in machine {
@@ -85,33 +108,31 @@ pub fn show(ui: &mut Ui, state: &mut BrowserState<'_>) -> Option<BrowserAction> 
     }
 
     // ---- local catalogue --------------------------------------------------
-    let local_hits: Vec<_> = catalog::search(state.query)
+    let cat_filter = (!state.category.is_empty()).then_some(state.category.as_str());
+    let local_hits: Vec<_> = catalog::search_filtered(state.query, cat_filter)
         .into_iter()
         .filter(|e| !state.configured.contains(&catalog::plugin_key(e)))
         .collect();
     let local_empty = local_hits.is_empty();
     if !local_hits.is_empty() {
-        ui.label(RichText::new("MCP servers").color(theme::text()).strong());
+        ui.label(
+            RichText::new(format!("Curated MCP servers ({})", local_hits.len()))
+                .color(theme::text())
+                .strong(),
+        );
         for entry in local_hits {
-            if add_row(ui, entry.name, entry.description) {
+            let mut desc = entry.description.to_string();
+            if entry.needs_key {
+                desc.push_str(" [needs env key]");
+            }
+            if entry.needs_args {
+                desc.push_str(" [needs arg]");
+            }
+            if add_row(ui, entry.name, &desc) {
                 action = Some(BrowserAction::Add {
                     name: entry.name.to_string(),
                     line: entry.launch_line.to_string(),
                 });
-            }
-            if entry.needs_key {
-                ui.label(
-                    RichText::new("     needs an API key in the environment before it starts")
-                        .color(theme::warn())
-                        .small(),
-                );
-            }
-            if entry.needs_args {
-                ui.label(
-                    RichText::new("     append a path or argument after adding")
-                        .color(theme::warn())
-                        .small(),
-                );
             }
         }
         ui.add_space(6.0);
@@ -120,8 +141,7 @@ pub fn show(ui: &mut Ui, state: &mut BrowserState<'_>) -> Option<BrowserAction> 
     if q.is_empty() && machine_empty && local_empty {
         ui.label(
             RichText::new(
-                "Every curated server is already configured. Type two or more characters \
-                 to search the MCP registry and GitHub, or paste a launch command below.",
+                "All matching curated servers are already configured. Type 2+ characters to search the online MCP registry + GitHub, or paste a launch line / mcpServers JSON below.",
             )
             .color(theme::dim())
             .italics()
@@ -137,29 +157,38 @@ pub fn show(ui: &mut Ui, state: &mut BrowserState<'_>) -> Option<BrowserAction> 
     // ---- agenttool.sh directory -------------------------------------------
     render_directory(ui, state, &q, &mut action);
 
-    // ---- manual ------------------------------------------------------------
+    // ---- manual command, GitHub link, or mcpServers JSON ------------------
     ui.add_space(8.0);
     ui.separator();
     ui.label(
-        RichText::new("Paste a launch command — or a GitHub repo link")
+        RichText::new("Paste launch command, GitHub repo URL, or `mcpServers` JSON")
             .color(theme::dim())
             .small(),
     );
     ui.horizontal(|ui| {
+        let parsed_json = online::parse_mcp_json_snippet(state.line);
         let is_url = online::looks_like_github_url(state.line);
         let field = crate::ui::text_edit(
             ui,
             state.line,
             crate::ui::TextEditSpec::singleline()
-                .hint("npx -y rea-agents mcp   ·   https://github.com/owner/repo")
+                .hint(r#"npx -y pkg  ·  https://github.com/owner/repo  ·  {"mcpServers":{...}}"#)
                 .width(f32::INFINITY),
         );
         let submitted = field.lost_focus()
             && ui.input(|i| i.key_pressed(egui::Key::Enter))
             && !state.line.trim().is_empty();
-        let button_label = if is_url { "Analyze" } else { "Add" };
+        let button_label = if parsed_json.is_some() {
+            "Import JSON"
+        } else if is_url {
+            "Analyze"
+        } else {
+            "Add"
+        };
         if ui.button(button_label).clicked() || submitted {
-            if is_url {
+            if let Some(servers) = parsed_json {
+                action = Some(BrowserAction::AddJson(servers));
+            } else if is_url {
                 action = Some(BrowserAction::Analyze(state.line.trim().to_string()));
             } else {
                 action = Some(BrowserAction::Add {
@@ -169,7 +198,17 @@ pub fn show(ui: &mut Ui, state: &mut BrowserState<'_>) -> Option<BrowserAction> 
             }
         }
     });
-    if online::looks_like_github_url(state.line) {
+    if let Some(servers) = online::parse_mcp_json_snippet(state.line) {
+        ui.label(
+            RichText::new(format!(
+                "Detected {} MCP server(s) in JSON: {}",
+                servers.len(),
+                servers.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")
+            ))
+            .color(theme::ok())
+            .small(),
+        );
+    } else if online::looks_like_github_url(state.line) {
         ui.label(
             RichText::new(
                 "GitHub link — the README will be read for its launch line and the plugin added automatically",
@@ -178,14 +217,21 @@ pub fn show(ui: &mut Ui, state: &mut BrowserState<'_>) -> Option<BrowserAction> 
             .small(),
         );
     } else if !state.line.trim().is_empty() {
-        ui.label(
-            RichText::new(format!(
-                "will be added as \u{201c}{}\u{201d}",
-                config::derive_name(state.line)
-            ))
-            .color(theme::structure())
-            .small(),
-        );
+        let tokens = config::split_args(state.line);
+        if let Some(cmd) = tokens.first() {
+            if let Err(reason) = config::validate_mcp_command(cmd, &tokens[1..]) {
+                ui.label(RichText::new(reason).color(theme::warn()).small());
+            } else {
+                ui.label(
+                    RichText::new(format!(
+                        "will be added as \u{201c}{}\u{201d}",
+                        config::derive_name(state.line)
+                    ))
+                    .color(theme::structure())
+                    .small(),
+                );
+            }
+        }
     }
 
     action
@@ -346,6 +392,7 @@ mod tests {
     #[test]
     fn browser_state_borrows_plain_app_state() {
         let mut query = String::from("git");
+        let mut category = String::new();
         let mut line = String::new();
         let available: Vec<AvailableServer> = Vec::new();
         let configured = vec!["mnemai".to_string()];
@@ -353,6 +400,7 @@ mod tests {
         let directory: Vec<OnlineEntry> = Vec::new();
         let state = BrowserState {
             query: &mut query,
+            category: &mut category,
             line: &mut line,
             available: &available,
             configured: &configured,

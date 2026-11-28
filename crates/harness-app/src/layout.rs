@@ -12,7 +12,7 @@ use crate::theme;
 use crate::ui;
 use crate::ui::chat::{ChatAction, ChatState};
 use crate::ui::input::{ComposerAction, ComposerState};
-use crate::ui::plugin_browser::{BrowserAction, BrowserState};
+use crate::ui::plugin_browser::BrowserState;
 use crate::ui::settings::SettingsState;
 use crate::ui::sidebar::SidebarState;
 use crate::ui::RightTab;
@@ -184,6 +184,11 @@ impl eframe::App for App {
             });
         if let Some(action) = sidebar_action {
             self.handle_sidebar(action);
+            if self.config.theme != self.applied_theme {
+                self.applied_theme = self.config.theme;
+                theme::apply(ctx, self.applied_theme);
+                ctx.request_repaint();
+            }
         }
 
         // Right-hand panel: one box, four tabs — the file tree, the artifact
@@ -192,10 +197,13 @@ impl eframe::App for App {
         if self.right_panel {
             let mut close_right = false;
             let mut swarm_action = None;
-            let mut clicked_add: Option<(String, String)> = None;
+            let mut right_browser_action = None;
+            let mut right_reconnect = false;
+            let mut right_import_aura = false;
+            let mut right_disable_failing = false;
+            let mut right_remove_server: Option<String> = None;
             let mut clicked_file: Option<std::path::PathBuf> = None;
             let configured: Vec<String> = self.plugins.mcp.keys().cloned().collect();
-            let mut query_edit = self.catalog_query.clone();
             let mut tab = self.right_tab;
             let project_root = self.file_tree.root.clone();
             egui::SidePanel::right("right-panel")
@@ -204,10 +212,10 @@ impl eframe::App for App {
                 .width_range(260.0..=640.0)
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
-                        ui.selectable_value(&mut tab, RightTab::Files, "📁 Files");
-                        ui.selectable_value(&mut tab, RightTab::Preview, "🖼 Preview");
-                        ui.selectable_value(&mut tab, RightTab::Plugins, "🔌 Plugins");
-                        ui.selectable_value(&mut tab, RightTab::Members, "👥 Members");
+                        ui.selectable_value(&mut tab, RightTab::Files, "Files");
+                        ui.selectable_value(&mut tab, RightTab::Preview, "Preview");
+                        ui.selectable_value(&mut tab, RightTab::Plugins, "Plugins");
+                        ui.selectable_value(&mut tab, RightTab::Members, "Agents");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.small_button("✕").on_hover_text("Hide the panel — bring it back with the Right panel toggle at the top or Ctrl+B").clicked() {
                                 close_right = true;
@@ -232,48 +240,150 @@ impl eframe::App for App {
                         }
                         RightTab::Plugins => {
                             egui::ScrollArea::vertical().show(ui, |ui| {
-                                ui.label("Plugin search");
-                                ui.text_edit_singleline(&mut query_edit);
-                                if query_edit.trim().len() < 2 {
-                                    ui.small(
-                                        "Type to search (e.g. gaming, social media, 3d game, summertime)",
-                                    );
-                                } else {
-                                    let hits = harness_core::catalog::search(&query_edit);
-                                    if hits.is_empty() {
-                                        ui.small("No matches.");
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui
+                                        .small_button("Pop out")
+                                        .on_hover_text("Open standalone Add a plugin window")
+                                        .clicked()
+                                    {
+                                        self.show_browser = true;
                                     }
-                                    for e in hits {
-                                        if configured.contains(&harness_core::catalog::plugin_key(e)) {
-                                            continue;
-                                        }
-                                        let row = crate::ui::row_button(
-                                            ui,
-                                            24.0,
-                                            false,
-                                            &format!("{} — {}", e.name, e.description),
-                                            "+ Add",
-                                        );
-                                        if row.clicked() {
-                                            clicked_add = Some((
-                                                e.name.to_string(),
-                                                e.launch_line.to_string(),
-                                            ));
-                                        }
-                                        row.on_hover_text(format!("{}\n{}", e.name, e.description));
+                                    if ui
+                                        .small_button("Import ~/.aura/mcp.json")
+                                        .on_hover_text("Import servers configured in Aura Code")
+                                        .clicked()
+                                    {
+                                        right_import_aura = true;
                                     }
+                                    if !self.mcp_errors.is_empty()
+                                        && ui
+                                            .small_button("Disable failing")
+                                            .on_hover_text("Turn off failing MCP servers")
+                                            .clicked()
+                                    {
+                                        right_disable_failing = true;
+                                    }
+                                    if ui.small_button("Reconnect").clicked() {
+                                        right_reconnect = true;
+                                    }
+                                });
+                                if let Some(note) = &self.status {
+                                    ui.label(egui::RichText::new(note).color(theme::ok()).small());
                                 }
+                                if let Some(err) = &self.error {
+                                    ui.label(egui::RichText::new(err).color(theme::danger()).small());
+                                }
+                                if !self.plugins.mcp.is_empty() {
+                                    egui::CollapsingHeader::new(
+                                        egui::RichText::new(format!(
+                                            "Configured ({} · {} tools)",
+                                            self.plugins.mcp.len(),
+                                            self.mcp_tool_counts.values().sum::<usize>()
+                                        ))
+                                        .strong(),
+                                    )
+                                    .default_open(true)
+                                    .show(ui, |ui| {
+                                        let mut toggled = false;
+                                        for (name, srv) in self.plugins.mcp.iter_mut() {
+                                            ui.horizontal(|ui| {
+                                                if ui.checkbox(&mut srv.enabled, "").changed() {
+                                                    toggled = true;
+                                                }
+                                                let is_conn = self.mcp_connecting.contains(name);
+                                                let err = self.mcp_errors.get(name);
+                                                let tools = self.mcp_tool_counts.get(name).copied().unwrap_or(0);
+                                                let color = if !srv.enabled {
+                                                    theme::dim()
+                                                } else if err.is_some() {
+                                                    theme::danger()
+                                                } else if is_conn {
+                                                    theme::warn()
+                                                } else {
+                                                    theme::ok()
+                                                };
+                                                let badge = if !srv.enabled {
+                                                    "off".to_string()
+                                                } else if is_conn {
+                                                    "connecting…".to_string()
+                                                } else if err.is_some() {
+                                                    "failed".to_string()
+                                                } else {
+                                                    format!("{tools}t")
+                                                };
+                                                let lbl = ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(format!("{name} [{badge}]"))
+                                                            .color(color)
+                                                            .small(),
+                                                    )
+                                                    .truncate(),
+                                                );
+                                                if let Some(e) = err {
+                                                    lbl.on_hover_text(e);
+                                                }
+                                                ui.with_layout(
+                                                    egui::Layout::right_to_left(egui::Align::Center),
+                                                    |ui| {
+                                                        if ui.small_button("x").on_hover_text("Remove").clicked() {
+                                                            right_remove_server = Some(name.clone());
+                                                        }
+                                                    },
+                                                );
+                                            });
+                                        }
+                                        if toggled {
+                                            right_reconnect = true;
+                                        }
+                                    });
+                                }
+                                ui.separator();
+                                right_browser_action = ui::plugin_browser::show(
+                                    ui,
+                                    &mut BrowserState {
+                                        query: &mut self.catalog_query,
+                                        category: &mut self.catalog_category,
+                                        line: &mut self.browser_line,
+                                        available: &self.available,
+                                        configured: &configured,
+                                        online: &self.online,
+                                        directory: &self.directory,
+                                    },
+                                );
                             });
                         }
                         RightTab::Members => {
-                            swarm_action = ui::members::show(ui, &mut self.swarm, &mut self.crew_task);
+                            let catalog = self
+                                .model_factory
+                                .all_known_models(&self.config.custom_providers);
+                            swarm_action = ui::members::show(
+                                ui,
+                                &mut self.swarm,
+                                &mut self.crew_task,
+                                &mut self.config,
+                                &catalog,
+                            );
                         }
                     }
                 });
             self.right_tab = tab;
-            self.catalog_query = query_edit;
             if close_right {
                 self.right_panel = false;
+            }
+            if right_import_aura {
+                self.import_aura_mcp();
+            }
+            if right_disable_failing {
+                self.disable_failing_mcp();
+            }
+            if let Some(name) = right_remove_server {
+                self.apply_settings(crate::SettingsAction::RemoveServer(name), ctx);
+            } else if right_reconnect {
+                let _ = self.plugins.save();
+                self.reconnect();
+            }
+            if let Some(act) = right_browser_action {
+                self.apply_browser_action(act, ctx);
             }
             if self.file_tree.root_changed {
                 self.file_tree.root_changed = false;
@@ -289,12 +399,22 @@ impl eframe::App for App {
                     self.draft.push_str(&format!(" {}", hint));
                 }
             }
-            if let Some((n, l)) = clicked_add {
-                self.add_mcp_server(&n, &l);
-            }
             match swarm_action {
                 Some(ui::members::SwarmAction::Run) => self.run_swarm(ctx),
                 Some(ui::members::SwarmAction::Stop) => self.swarm.reset(),
+                Some(ui::members::SwarmAction::SaveConfig) => {
+                    if let Err(e) = self.config.save() {
+                        self.error = Some(format!("could not save agent config: {e}"));
+                    }
+                }
+                Some(ui::members::SwarmAction::SendToChat(text)) => {
+                    if !self.draft.trim().is_empty() {
+                        self.draft.push_str("\n\n");
+                    }
+                    self.draft.push_str(&text);
+                    self.view = View::Chat;
+                    self.focus_composer = true;
+                }
                 None => {}
             }
         }
@@ -331,13 +451,9 @@ impl eframe::App for App {
                 }
                 if let Some(err) = &self.error {
                     let mut dismiss = false;
-                    let mut resume = false;
-                    let capped = harness_core::agent::is_round_cap_message(err);
+                    let resume = false;
                     ui.horizontal(|ui| {
                         ui.colored_label(theme::danger(), err);
-                        if capped && ui.small_button("Continue").clicked() {
-                            resume = true;
-                        }
                         if ui.small_button("✕").on_hover_text("Dismiss").clicked() {
                             dismiss = true;
                         }
@@ -395,7 +511,66 @@ impl eframe::App for App {
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.toggle_value(&mut self.right_panel, "Right panel")
-                        .on_hover_text("Show or hide the Files / Preview / Plugins pane · Ctrl+B");
+                        .on_hover_text("Show or hide the Files / Preview / Plugins / Agents pane · Ctrl+B");
+                    ui.separator();
+                    let chrome_cfg = self.plugins.mcp.get("aura_chrome");
+                    let chrome_tools = self.mcp_tool_counts.get("aura_chrome").copied().unwrap_or(0);
+                    let chrome_connecting = self.mcp_connecting.contains("aura_chrome");
+                    let chrome_err = self.mcp_errors.get("aura_chrome");
+                    let (chrome_text, chrome_color, chrome_tip) = match (chrome_cfg, chrome_connecting, chrome_err) {
+                        (Some(cfg), true, _) if cfg.enabled => (
+                            "Chrome…".to_string(),
+                            theme::warn(),
+                            "Connecting aura_chrome MCP bridge (ws://127.0.0.1:7341)".to_string(),
+                        ),
+                        (Some(cfg), false, Some(err)) if cfg.enabled => (
+                            "Retry Chrome".to_string(),
+                            theme::danger(),
+                            format!("aura_chrome error: {err}\nClick to reconnect"),
+                        ),
+                        (Some(cfg), false, None) if cfg.enabled && chrome_tools > 0 => (
+                            format!("Chrome · {chrome_tools}t"),
+                            theme::ok(),
+                            "Aura for Chrome MCP bridge connected — click to open Plugins".to_string(),
+                        ),
+                        _ => (
+                            "Enable Chrome".to_string(),
+                            theme::dim(),
+                            "Click to enable Aura for Chrome MCP control".to_string(),
+                        ),
+                    };
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(chrome_text)
+                                    .color(chrome_color)
+                                    .small(),
+                            )
+                            .frame(false),
+                        )
+                        .on_hover_text(chrome_tip)
+                        .clicked()
+                    {
+                        if self
+                            .plugins
+                            .mcp
+                            .get("aura_chrome")
+                            .is_some_and(|c| c.enabled && !self.mcp_errors.contains_key("aura_chrome"))
+                        {
+                            self.right_panel = true;
+                            self.right_tab = RightTab::Plugins;
+                        } else {
+                            if let Some(cfg) = self.plugins.mcp.get_mut("aura_chrome") {
+                                cfg.enabled = true;
+                            } else {
+                                self.plugins = harness_core::config::with_chrome_plugin(
+                                    std::mem::take(&mut self.plugins),
+                                );
+                            }
+                            let _ = self.plugins.save();
+                            self.reconnect();
+                        }
+                    }
                     ui.separator();
                     let waiting = self.cards.iter().any(|c| c.awaiting_approval());
                     if waiting {
@@ -454,6 +629,7 @@ impl eframe::App for App {
                     &mut ChatState {
                         messages,
                         live: &self.live,
+                        steps: &self.live_steps,
                         cards: &self.cards,
                         busy: self.busy,
                         cache: &mut self.md_cache,
@@ -463,6 +639,9 @@ impl eframe::App for App {
                 );
             }
             View::Settings => {
+                let catalog = self
+                    .model_factory
+                    .all_known_models(&self.config.custom_providers);
                 let cmd_tools: Vec<String> = self
                     .plugins
                     .cmd
@@ -477,8 +656,10 @@ impl eframe::App for App {
                         key_input: &mut self.key_input,
                         key_present: self.api_key.is_some(),
                         mcp_status: &self.mcp_status,
+                        mcp_errors: &self.mcp_errors,
                         cmd_tools: &cmd_tools,
                         tool_count: self.registry.len(),
+                        catalog: &catalog,
                     },
                 );
             }
@@ -559,6 +740,7 @@ impl eframe::App for App {
                                 ui,
                                 &mut BrowserState {
                                     query: &mut self.catalog_query,
+                                    category: &mut self.catalog_category,
                                     line: &mut self.browser_line,
                                     available: &self.available,
                                     configured: &configured,
@@ -568,20 +750,9 @@ impl eframe::App for App {
                             );
                         });
                 });
-            match browser_action {
-                Some(BrowserAction::Add { name, line }) => {
-                    self.add_mcp_server(&name, &line);
-                    // Keep the window open so more can be chosen.
-                    self.show_browser = true;
-                }
-                Some(BrowserAction::Analyze(url)) => {
-                    self.start_analyze(&url);
-                    self.show_browser = true;
-                }
-                Some(BrowserAction::Open(url)) => {
-                    ctx.open_url(egui::OpenUrl::new_tab(url));
-                }
-                None => {}
+            if let Some(act) = browser_action {
+                self.apply_browser_action(act, ctx);
+                self.show_browser = true;
             }
         }
 
@@ -599,8 +770,12 @@ impl eframe::App for App {
                 .resizable(true)
                 .open(&mut open)
                 .show(ctx, |ui| {
-                    factory_action =
-                        ui::model_factory::show(ui, &mut self.model_factory, &current_model);
+                    factory_action = ui::model_factory::show(
+                        ui,
+                        &mut self.model_factory,
+                        &current_model,
+                        &self.config.custom_providers,
+                    );
                 });
             self.model_factory.open = open;
             if let Some(action) = factory_action {
@@ -608,7 +783,7 @@ impl eframe::App for App {
             }
         }
 
-        if self.busy {
+        if self.busy || !self.mcp_connecting.is_empty() {
             ctx.request_repaint_after(Duration::from_millis(50));
         } else if self.command_busy.is_some() {
             // The engine answers on a worker thread; keep the frame alive so

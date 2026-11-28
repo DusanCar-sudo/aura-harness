@@ -7,13 +7,20 @@
 //! step stays unit-testable against recorded line fixtures.
 
 use crate::api::ToolDef;
-use crate::config::McpServer;
+use crate::config::{validate_mcp_command, McpServer};
 use crate::error::{Error, Result};
+use base64::Engine;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::process::Stdio;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
+use tokio::sync::Mutex;
+
+const MCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
+const MCP_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Tool names are namespaced so a chat can mix several servers safely.
 pub fn name_prefix(server: &str) -> String {
@@ -39,6 +46,7 @@ pub struct McpConnection {
     server: String,
     child: Child,
     reader: BufReader<tokio::process::ChildStdout>,
+    stderr_tail: Arc<Mutex<String>>,
     next_id: u64,
 }
 
@@ -50,16 +58,18 @@ pub struct CallResult {
 }
 
 impl McpConnection {
-    /// Spawn the server and complete the MCP handshake.
+    /// Spawn the server and complete the MCP handshake with timeout & stderr capture.
     ///
     /// The child gets a minimal environment plus whatever `cfg.env` declares —
     /// never this app's own secrets (the API key lives in our process only).
     pub async fn connect(server_name: &str, cfg: &McpServer) -> Result<Self> {
+        validate_mcp_command(&cfg.command, &cfg.args).map_err(Error::Mcp)?;
+
         let mut cmd = Command::new(&cfg.command);
         cmd.args(&cfg.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .env_clear()
             .envs(crate::child_env().iter().map(|(k, v)| (k.clone(), v.clone())));
@@ -73,14 +83,66 @@ impl McpConnection {
             .stdout
             .take()
             .ok_or_else(|| Error::Mcp("no stdout on child".into()))?;
+        let stderr_tail = Arc::new(Mutex::new(String::new()));
+        if let Some(stderr) = child.stderr.take() {
+            let tail = Arc::clone(&stderr_tail);
+            tokio::spawn(async move {
+                let mut r = BufReader::new(stderr);
+                let mut line = String::new();
+                while let Ok(n) = r.read_line(&mut line).await {
+                    if n == 0 {
+                        break;
+                    }
+                    let mut guard = tail.lock().await;
+                    guard.push_str(&line);
+                    if guard.len() > 2000 {
+                        let cut = guard.len() - 1500;
+                        let safe = guard
+                            .char_indices()
+                            .find(|(idx, _)| *idx >= cut)
+                            .map(|(idx, _)| idx)
+                            .unwrap_or(0);
+                        guard.drain(..safe);
+                    }
+                    line.clear();
+                }
+            });
+        }
         let mut conn = Self {
             server: server_name.to_string(),
             child,
             reader: BufReader::new(stdout),
+            stderr_tail: Arc::clone(&stderr_tail),
             next_id: 1,
         };
-        conn.initialize().await?;
-        Ok(conn)
+        match tokio::time::timeout(MCP_CONNECT_TIMEOUT, conn.initialize()).await {
+            Ok(Ok(())) => Ok(conn),
+            Ok(Err(e)) => {
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                let stderr = stderr_tail.lock().await.trim().to_string();
+                if stderr.is_empty() {
+                    Err(e)
+                } else {
+                    let tail = stderr.lines().last().unwrap_or(&stderr);
+                    Err(Error::Mcp(format!("{e} ({tail})")))
+                }
+            }
+            Err(_) => {
+                let stderr = stderr_tail.lock().await.trim().to_string();
+                if stderr.is_empty() {
+                    Err(Error::Mcp(format!(
+                        "handshake timed out after {}s",
+                        MCP_CONNECT_TIMEOUT.as_secs()
+                    )))
+                } else {
+                    let tail = stderr.lines().last().unwrap_or(&stderr);
+                    Err(Error::Mcp(format!(
+                        "handshake timed out after {}s ({tail})",
+                        MCP_CONNECT_TIMEOUT.as_secs()
+                    )))
+                }
+            }
+        }
     }
 
     pub fn server_name(&self) -> &str {
@@ -178,12 +240,29 @@ impl McpConnection {
         Ok(parse_tool_list_raw(&self.server, &result))
     }
 
-    /// Invoke one tool by its *original* name on this server.
+    /// Invoke one tool by its *original* name on this server, with timeout.
     pub async fn call(&mut self, tool: &str, arguments: &str) -> Result<CallResult> {
         let parsed: Value = serde_json::from_str(arguments).unwrap_or(json!({}));
-        let result = self
-            .request("tools/call", json!({"name": tool, "arguments": parsed}))
-            .await?;
+        let fut = self.request("tools/call", json!({"name": tool, "arguments": parsed}));
+        let result = match tokio::time::timeout(MCP_CALL_TIMEOUT, fut).await {
+            Ok(Ok(v)) => v,
+            Ok(Err(e)) => {
+                let stderr = self.stderr_tail.lock().await.trim().to_string();
+                if stderr.is_empty() {
+                    return Err(e);
+                }
+                let tail = stderr.lines().last().unwrap_or(&stderr);
+                return Err(Error::Mcp(format!("{e} ({tail})")));
+            }
+            Err(_) => {
+                return Err(Error::Mcp(format!(
+                    "{}/{} timed out after {}s",
+                    self.server,
+                    tool,
+                    MCP_CALL_TIMEOUT.as_secs()
+                )));
+            }
+        };
         Ok(parse_call_result(&result))
     }
 }
@@ -228,19 +307,42 @@ pub fn parse_tool_list_raw(server: &str, result: &Value) -> Vec<(String, ToolDef
         .unwrap_or_default()
 }
 
-/// Flatten a `tools/call` result's content blocks into plain text.
+/// Flatten a `tools/call` result's content blocks into plain text, saving
+/// decoded base64 `image` blocks into temporary files so the UI can show them.
 pub fn parse_call_result(result: &Value) -> CallResult {
     let is_error = result.get("isError").and_then(Value::as_bool).unwrap_or(false);
     let mut parts = Vec::new();
     if let Some(blocks) = result.get("content").and_then(Value::as_array) {
-        for block in blocks {
+        for (idx, block) in blocks.iter().enumerate() {
             match block.get("type").and_then(Value::as_str) {
                 Some("text") => {
                     if let Some(t) = block.get("text").and_then(Value::as_str) {
                         parts.push(t.to_string());
                     }
                 }
-                Some(other) => parts.push(format!("[{other} content omitted]")),
+                Some("image") => {
+                    let mime = block
+                        .get("mimeType")
+                        .and_then(Value::as_str)
+                        .unwrap_or("image/png");
+                    let saved = block
+                        .get("data")
+                        .and_then(Value::as_str)
+                        .filter(|b64| b64.len() > 64)
+                        .and_then(|b64| {
+                            let clean = b64.split(',').next_back().unwrap_or(b64);
+                            base64::engine::general_purpose::STANDARD.decode(clean.trim()).ok()
+                        })
+                        .and_then(|bytes| save_mcp_image(&bytes, mime, idx).ok().map(|p| (p, bytes.len())));
+                    match saved {
+                        Some((path, len)) => parts.push(format!(
+                            "[image saved: {} ({mime}, {len} bytes)]",
+                            path.display()
+                        )),
+                        None => parts.push(format!("[image content ({mime})]")),
+                    }
+                }
+                Some(other) => parts.push(format!("[{other} content]")),
                 None => {}
             }
         }
@@ -257,22 +359,110 @@ pub fn parse_call_result(result: &Value) -> CallResult {
     }
 }
 
-/// Spawn every enabled server. Servers that fail to start are reported, not
-/// fatal — one broken plugin must not take the chat down.
-pub async fn connect_all(
-    servers: &BTreeMap<String, McpServer>,
-) -> (BTreeMap<String, McpConnection>, Vec<String>) {
-    let mut conns = BTreeMap::new();
-    let mut failures = Vec::new();
+fn save_mcp_image(bytes: &[u8], mime: &str, idx: usize) -> std::io::Result<std::path::PathBuf> {
+    let ext = if mime.contains("jpeg") || mime.contains("jpg") {
+        "jpg"
+    } else if mime.contains("webp") {
+        "webp"
+    } else {
+        "png"
+    };
+    let dir = std::env::temp_dir().join("aura-harness-mcp-images");
+    std::fs::create_dir_all(&dir)?;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let path = dir.join(format!("shot-{ts}-{idx}.{ext}"));
+    std::fs::write(&path, bytes)?;
+    Ok(path)
+}
+
+/// Event emitted for one MCP server as soon as its concurrent boot settles.
+pub struct McpServerBoot {
+    pub name: String,
+    pub conn: Option<McpConnection>,
+    pub tools: Vec<crate::tools::RegisteredTool>,
+    pub error: Option<String>,
+}
+
+/// Boot all enabled servers concurrently and stream each result as soon as it
+/// completes (fast local servers like `mnemai` and `aura_chrome` land first).
+pub async fn connect_streaming(
+    servers: BTreeMap<String, McpServer>,
+    tx: tokio::sync::mpsc::UnboundedSender<McpServerBoot>,
+) {
+    let mut set = tokio::task::JoinSet::new();
     for (name, cfg) in servers {
         if !cfg.enabled {
             continue;
         }
-        match McpConnection::connect(name, cfg).await {
-            Ok(c) => {
-                conns.insert(name.clone(), c);
+        set.spawn(async move {
+            match McpConnection::connect(&name, &cfg).await {
+                Ok(mut conn) => match conn.list_tools_raw().await {
+                    Ok(raw) => {
+                        let tools = raw
+                            .into_iter()
+                            .map(|(tool, def)| crate::tools::RegisteredTool {
+                                def,
+                                executor: crate::tools::ToolExecutor::Mcp {
+                                    server: name.clone(),
+                                    tool,
+                                },
+                            })
+                            .collect();
+                        McpServerBoot {
+                            name,
+                            conn: Some(conn),
+                            tools,
+                            error: None,
+                        }
+                    }
+                    Err(e) => McpServerBoot {
+                        name,
+                        conn: Some(conn),
+                        tools: Vec::new(),
+                        error: Some(format!("tools/list: {e}")),
+                    },
+                },
+                Err(e) => McpServerBoot {
+                    name,
+                    conn: None,
+                    tools: Vec::new(),
+                    error: Some(e.to_string()),
+                },
             }
-            Err(e) => failures.push(format!("{name}: {e}")),
+        });
+    }
+    while let Some(res) = set.join_next().await {
+        if let Ok(boot) = res {
+            let _ = tx.send(boot);
+        }
+    }
+}
+
+/// Spawn every enabled server concurrently. Servers that fail to start are
+/// reported, not fatal — one broken plugin must not take the chat down.
+pub async fn connect_all(
+    servers: &BTreeMap<String, McpServer>,
+) -> (BTreeMap<String, McpConnection>, Vec<String>) {
+    let mut set = tokio::task::JoinSet::new();
+    for (name, cfg) in servers {
+        if !cfg.enabled {
+            continue;
+        }
+        let (name, cfg) = (name.clone(), cfg.clone());
+        set.spawn(async move { (name.clone(), McpConnection::connect(&name, &cfg).await) });
+    }
+    let mut conns = BTreeMap::new();
+    let mut failures = Vec::new();
+    while let Some(res) = set.join_next().await {
+        match res {
+            Ok((name, Ok(c))) => {
+                conns.insert(name, c);
+            }
+            Ok((name, Err(e))) => failures.push(format!("{name}: {e}")),
+            Err(e) => failures.push(format!("mcp task: {e}")),
         }
     }
     (conns, failures)

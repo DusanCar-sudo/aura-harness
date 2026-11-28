@@ -47,6 +47,10 @@ pub struct ToolCall {
     #[serde(rename = "type", default = "tool_kind")]
     pub kind: String,
     pub function: FunctionCall,
+    /// Gemini 2.5/3 thoughtSignature preserved across turns (stripped by OpenAI
+    /// wire serializer).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 /// The only tool-call kind the API accepts today.
@@ -69,6 +73,7 @@ impl ToolCall {
                 name: name.into(),
                 arguments: arguments.into(),
             },
+            thought_signature: None,
         }
     }
 }
@@ -221,6 +226,7 @@ pub enum StreamEvent {
     Content(String),
     ToolCallStart { index: usize, id: String, name: String },
     ToolCallArgs { index: usize, delta: String },
+    ToolCallSignature { index: usize, signature: String },
     Done { finish_reason: Option<String>, usage: Option<Usage> },
 }
 
@@ -232,6 +238,9 @@ pub fn parse_stream_chunk(payload: &str) -> Result<Vec<StreamEvent>> {
         return Ok(Vec::new());
     }
     let v: Value = serde_json::from_str(payload)?;
+    if let Some((status, message)) = crate::provider::extract_sse_error(&v) {
+        return Err(Error::Api { status, message });
+    }
     let mut events = Vec::new();
     let Some(choices) = v.get("choices").and_then(Value::as_array) else {
         return Ok(events);
@@ -318,10 +327,21 @@ fn wire_message(m: &Message) -> Value {
         out.insert("content".into(), Value::Array(parts));
     }
     if !m.tool_calls.is_empty() {
-        out.insert(
-            "tool_calls".into(),
-            serde_json::to_value(&m.tool_calls).unwrap_or(Value::Null),
-        );
+        let calls: Vec<Value> = m
+            .tool_calls
+            .iter()
+            .map(|tc| {
+                json!({
+                    "id": tc.id,
+                    "type": tc.kind,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    }
+                })
+            })
+            .collect();
+        out.insert("tool_calls".into(), Value::Array(calls));
     }
     if let Some(id) = &m.tool_call_id {
         out.insert("tool_call_id".into(), json!(id));
@@ -343,10 +363,19 @@ fn build_body(messages: &[Message], opts: &ChatOptions) -> Value {
     // A routing prefix (`openrouter/`, `fpt/`, `deepseek/`, …) belongs to the
     // factory, not the wire. Providers expect the bare model id.
     let model = crate::provider::strip_routing_prefix(&model_str).to_string();
+    let family = crate::provider::provider_family(&model_str);
+    let is_deepseek = family == "deepseek"
+        || model.starts_with("deepseek-v4")
+        || model.starts_with("deepseek-flash");
     let effort = opts.effort.unwrap_or(ReasoningEffort::None);
-    let thinking = match effort {
-        ReasoningEffort::None => ThinkingSwitch { kind: "disabled".into() },
-        _ => ThinkingSwitch { kind: "enabled".into() },
+    let thinking = if matches!(family, "openai" | "lmstudio" | "aura-local" | "ollama") {
+        serde_json::Value::Null
+    } else {
+        let kind = match effort {
+            ReasoningEffort::None => "disabled",
+            _ => "enabled",
+        };
+        serde_json::json!({ "type": kind })
     };
     let tools = if opts.tools.is_empty() {
         None
@@ -367,20 +396,25 @@ fn build_body(messages: &[Message], opts: &ChatOptions) -> Value {
                 .collect::<Vec<_>>(),
         )
     };
+    // `max` is DeepSeek-specific; OpenAI/LM Studio/local endpoints reject it (400).
     let effort_value = match effort {
         ReasoningEffort::None => serde_json::Value::Null,
+        ReasoningEffort::Max if !is_deepseek => serde_json::Value::String("high".into()),
         e => serde_json::to_value(e).unwrap_or(serde_json::Value::Null),
     };
-    serde_json::json!({
+    let mut body = serde_json::json!({
         "model": model,
         "messages": messages.iter().map(wire_message).collect::<Vec<_>>(),
         "stream": true,
         "stream_options": { "include_usage": true },
-        "thinking": thinking,
         "reasoning_effort": effort_value,
         "max_tokens": opts.max_tokens,
         "tools": tools,
-    })
+    });
+    if !thinking.is_null() {
+        body["thinking"] = thinking;
+    }
+    body
 }
 
 /// Kick off a streamed completion. Returns a receiver of events; errors are
@@ -418,14 +452,13 @@ pub fn stream_chat(
         // headers. The body-stream timeout below cannot see that, so the
         // request itself needs the same deadline or the turn hangs forever
         // with the UI stuck on "Working…".
-        let resp = timeout(
-            STREAM_IDLE_TIMEOUT,
-            http.post(format!("{}/chat/completions", base.trim_end_matches('/')))
-                .bearer_auth(api_key)
-                .json(&body)
-                .send(),
-        )
-        .await;
+        let mut req = http
+            .post(format!("{}/chat/completions", base.trim_end_matches('/')))
+            .json(&body);
+        if !api_key.is_empty() && api_key != "local" && api_key != "custom" {
+            req = req.bearer_auth(api_key);
+        }
+        let resp = timeout(STREAM_IDLE_TIMEOUT, req.send()).await;
         let resp = match resp {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
@@ -456,7 +489,27 @@ pub fn stream_chat(
         loop {
             let chunk = match timeout(STREAM_IDLE_TIMEOUT, stream.next()).await {
                 Ok(Some(c)) => c,
-                Ok(None) => break, // stream ended cleanly
+                Ok(None) => {
+                    if !buf.trim().is_empty() {
+                        for line in buf.lines() {
+                            let Some(payload) = line.strip_prefix("data:") else { continue };
+                            match parse_stream_chunk(payload) {
+                                Ok(events) => {
+                                    for ev in events {
+                                        if tx.send(Ok(ev)).await.is_err() {
+                                            return;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Err(e)).await;
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    break; // stream ended cleanly
+                }
                 Err(_elapsed) => {
                     let _ = tx
                         .send(Err(Error::Api {
@@ -477,7 +530,8 @@ pub fn stream_chat(
                     return;
                 }
             };
-            buf.push_str(&String::from_utf8_lossy(&bytes));
+            let normalized = String::from_utf8_lossy(&bytes).replace("\r\n", "\n");
+            buf.push_str(&normalized);
             // SSE frames are separated by blank lines.
             while let Some(pos) = buf.find("\n\n") {
                 let frame: String = buf.drain(..pos + 2).collect();
@@ -546,6 +600,13 @@ mod tests {
     }
 
     #[test]
+    fn parse_stream_chunk_surfaces_sse_error_frames() {
+        let payload = r#"{"error":{"message":"Engine protocol predict stream returned an error: decode() failed"}}"#;
+        let err = parse_stream_chunk(payload).unwrap_err().to_string();
+        assert!(err.contains("decode() failed"), "{err}");
+    }
+
+    #[test]
     fn body_disables_thinking_on_none_effort() {
         let opts = ChatOptions { effort: Some(ReasoningEffort::None), ..Default::default() };
         let body = build_body(&[], &opts);
@@ -578,6 +639,27 @@ mod tests {
         assert_eq!(body["thinking"]["type"], "enabled");
         assert_eq!(body["reasoning_effort"], "high");
         assert_eq!(body["tools"][0]["function"]["name"], "echo");
+    }
+
+    #[test]
+    fn body_clamps_max_effort_to_high_for_non_deepseek_providers() {
+        let lm_opts = ChatOptions {
+            model_name: Some("lmstudio/liquid/lfm2.5-1.2b".into()),
+            effort: Some(ReasoningEffort::Max),
+            ..Default::default()
+        };
+        let lm_body = build_body(&[], &lm_opts);
+        assert_eq!(lm_body["reasoning_effort"], "high");
+        assert!(lm_body.get("thinking").is_none());
+
+        let ds_opts = ChatOptions {
+            model_name: Some("deepseek-v4-pro".into()),
+            effort: Some(ReasoningEffort::Max),
+            ..Default::default()
+        };
+        let ds_body = build_body(&[], &ds_opts);
+        assert_eq!(ds_body["reasoning_effort"], "max");
+        assert_eq!(ds_body["thinking"]["type"], "enabled");
     }
 
     #[test]

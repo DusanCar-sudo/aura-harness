@@ -352,7 +352,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &egui::Context, state: &mut PreviewState, ro
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(s.url()).small().color(theme_dim()));
                 if ui
-                    .small_button("📋")
+                    .small_button("copy")
                     .on_hover_text("Copy the preview URL")
                     .clicked()
                 {
@@ -487,7 +487,7 @@ fn empty_state(ui: &mut egui::Ui, ctx: &egui::Context, state: &mut PreviewState,
             match &state.device {
                 Some(d) => {
                     ui.label(format!("Device: {d} · capturing its screen.", d = d));
-                    if ui.button("📸 Capture screen").clicked() {
+                    if ui.button("Capture screen").clicked() {
                         state.spawn(ctx, Job::Adb);
                     }
                 }
@@ -521,7 +521,7 @@ fn empty_state(ui: &mut egui::Ui, ctx: &egui::Context, state: &mut PreviewState,
                     state.busy = false;
                     state.rx = None;
                 }
-                if ui.button("📸 Capture window").clicked() {
+                if ui.button("Capture window").clicked() {
                     state.spawn(
                         ctx,
                         Job::Window {

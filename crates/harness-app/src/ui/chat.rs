@@ -71,6 +71,7 @@ pub enum ChatAction {
 pub struct ChatState<'a> {
     pub messages: &'a [Message],
     pub live: &'a LiveTurn,
+    pub steps: &'a [harness_core::agent::AgentStep],
     pub cards: &'a [ToolCard],
     pub busy: bool,
     pub cache: &'a mut egui_commonmark::CommonMarkCache,
@@ -100,7 +101,7 @@ pub fn show(ui: &mut Ui, state: &mut ChatState<'_>) -> Option<ChatAction> {
                             render_message(ui, state.cache, state.images, msg)
                         }
                         TranscriptRow::Call { call, result, card } => {
-                            render_call(ui, call, *result, *card, state.busy)
+                            render_call(ui, state.images, call, *result, *card, state.busy)
                         }
                         TranscriptRow::Orphan(card) => render_orphan_card(ui, card, state.busy),
                     };
@@ -296,7 +297,7 @@ fn render_message(
                     markdown::show(ui, cache, &visible);
                     ui.add_space(4.0);
                 } else if !has_reasoning && msg.tool_calls.is_empty() {
-                    ui.label(RichText::new("Task completed.").color(theme::dim()).small());
+                    ui.label(RichText::new("(no response — retry or check error)").color(theme::dim()).small());
                 }
             });
             note_right_click(ui, block.response.rect, msg);
@@ -413,7 +414,6 @@ fn thumbnail(
     cache: &mut ImageCache,
     img: &ImagePart,
 ) -> Option<(egui::TextureHandle, egui::Vec2)> {
-    const EDGE: f32 = 260.0;
     let key = {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         img.data.hash(&mut h);
@@ -425,12 +425,39 @@ fn thumbnail(
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&img.data)
         .ok()?;
-    let decoded = image::load_from_memory(&bytes).ok()?.to_rgba8();
+    decode_cached_thumbnail(ctx, cache, key, &bytes, 260.0)
+}
+
+fn thumbnail_from_path(
+    ctx: &egui::Context,
+    cache: &mut ImageCache,
+    path: &str,
+) -> Option<(egui::TextureHandle, egui::Vec2)> {
+    let key = {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        path.hash(&mut h);
+        h.finish()
+    };
+    if let Some((tex, size)) = cache.get(&key) {
+        return Some((tex.clone(), *size));
+    }
+    let bytes = std::fs::read(path).ok()?;
+    decode_cached_thumbnail(ctx, cache, key, &bytes, 360.0)
+}
+
+fn decode_cached_thumbnail(
+    ctx: &egui::Context,
+    cache: &mut ImageCache,
+    key: u64,
+    bytes: &[u8],
+    edge: f32,
+) -> Option<(egui::TextureHandle, egui::Vec2)> {
+    let decoded = image::load_from_memory(bytes).ok()?.to_rgba8();
     let (w, h) = decoded.dimensions();
     if w == 0 || h == 0 {
         return None;
     }
-    let scale = (EDGE / w.max(h) as f32).min(1.0);
+    let scale = (edge / w.max(h) as f32).min(1.0);
     let rgba = if scale < 1.0 {
         image::imageops::resize(
             &decoded,
@@ -453,6 +480,27 @@ fn thumbnail(
     );
     cache.insert(key, (tex.clone(), size));
     Some((tex, size))
+}
+
+fn extract_saved_image_paths(output: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("[image saved: ") {
+            if let Some(p) = rest.split(" (").next() {
+                let p = p.trim();
+                if !p.is_empty() && !paths.contains(&p.to_string()) {
+                    paths.push(p.to_string());
+                }
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("Screenshot saved to ") {
+            let p = rest.trim();
+            if !p.is_empty() && !paths.contains(&p.to_string()) {
+                paths.push(p.to_string());
+            }
+        }
+    }
+    paths
 }
 
 /// Dimmed, collapsed-by-default chain of thought.
@@ -574,6 +622,23 @@ fn friendly_call(name: &str, arguments: &str) -> String {
         "list_files" => format!("ls {}", one(get("path"))),
         "grep" => format!("grep {} · {}", one(get("pattern")), one(get("path"))),
         "glob" => format!("glob {} · {}", one(get("pattern")), one(get("path"))),
+        "update_steps" => {
+            let count = parsed
+                .get("steps")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("plan ({count} steps)")
+        }
+        "spawn_subagent" => {
+            let role = get("role");
+            let task = get("task");
+            if role.is_empty() {
+                format!("subagent: {}", one(task))
+            } else {
+                format!("subagent ({role}): {}", one(task))
+            }
+        }
         _ if name.starts_with("mcp_") => {
             let args = parsed.to_string();
             if args == "null" || args == "{}" {
@@ -639,6 +704,7 @@ fn result_preview(output: &str) -> Option<String> {
 
 fn render_call(
     ui: &mut Ui,
+    images: &mut ImageCache,
     call: &ToolCall,
     result: Option<&Message>,
     card: Option<&ToolCard>,
@@ -771,6 +837,18 @@ fn render_call(
                             )
                             .wrap(),
                         );
+                        for img_path in extract_saved_image_paths(&text) {
+                            if let Some((tex, size)) = thumbnail_from_path(ui.ctx(), images, &img_path) {
+                                ui.add_space(4.0);
+                                ui.image(egui::load::SizedTexture::new(tex.id(), size));
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(&img_path).color(theme::dim()).small());
+                                    if ui.small_button("Copy path").clicked() {
+                                        ui.ctx().copy_text(img_path);
+                                    }
+                                });
+                            }
+                        }
                     });
             });
     });
@@ -884,6 +962,46 @@ fn render_orphan_card(ui: &mut Ui, card: &ToolCard, busy: bool) -> Option<ChatAc
 }
 
 fn render_live(ui: &mut Ui, state: &mut ChatState<'_>) {
+    if !state.steps.is_empty() {
+        let done = state
+            .steps
+            .iter()
+            .filter(|s| s.status == "done" || s.status == "skipped")
+            .count();
+        egui::Frame::none()
+            .fill(theme::card())
+            .stroke(egui::Stroke::new(1.0_f32, theme::structure()))
+            .rounding(egui::Rounding::same(6.0))
+            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Execution plan").color(theme::accent()).strong().small());
+                    ui.label(
+                        RichText::new(format!("· {done}/{} steps", state.steps.len()))
+                            .color(theme::dim())
+                            .small(),
+                    );
+                });
+                for step in state.steps {
+                    let (mark, color) = match step.status.as_str() {
+                        "done" => ("[x]", theme::ok()),
+                        "in_progress" => ("[>]", theme::accent()),
+                        "failed" => ("[!]", theme::danger()),
+                        "skipped" => ("[-]", theme::dim()),
+                        _ => ("[ ]", theme::dim()),
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(mark).monospace().small().color(color));
+                        ui.label(RichText::new(&step.title).small().color(if step.status == "in_progress" {
+                            theme::text()
+                        } else {
+                            theme::dim()
+                        }));
+                    });
+                }
+            });
+        ui.add_space(4.0);
+    }
     if !state.live.reasoning.is_empty() {
         reasoning_block(ui, &state.live.reasoning, state.live.reasoning_secs);
     }
@@ -1150,6 +1268,7 @@ mod tests {
                 let mut state = ChatState {
                     messages: &messages,
                     live: &live,
+                    steps: &[],
                     cards: &[],
                     busy: false,
                     cache: &mut cache,
@@ -1164,6 +1283,7 @@ mod tests {
                 let mut state = ChatState {
                     messages: &messages,
                     live: &live,
+                    steps: &[],
                     cards: &[],
                     busy: false,
                     cache: &mut cache,
@@ -1211,5 +1331,12 @@ mod tests {
             footer_y > answer_y,
             "the finished marker must come after the answer, not before it"
         );
+    }
+
+    #[test]
+    fn extracts_saved_image_paths_from_tool_output() {
+        let out = "Screenshot saved to /tmp/aura-chrome/tab1-123.png\n[image saved: /tmp/shot.png (image/png, 4096 bytes)]";
+        let paths = extract_saved_image_paths(out);
+        assert_eq!(paths, vec!["/tmp/aura-chrome/tab1-123.png", "/tmp/shot.png"]);
     }
 }

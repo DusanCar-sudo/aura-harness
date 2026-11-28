@@ -11,9 +11,11 @@
 //! `run_swarm` in `main.rs`.
 
 use crate::theme;
-use crate::ui::{text_edit, TextEditSpec};
+use crate::ui::{model_dropdown, text_edit, TextEditSpec};
 use egui::{RichText, Ui};
 use harness_core::agent::{truncate_for_display, LoopEvent};
+use harness_core::config::{AgentMemberConfig, Config};
+use harness_core::models::ModelInfo;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tokio::sync::mpsc::{error::TryRecvError, Receiver};
@@ -114,9 +116,12 @@ impl MemberStatus {
 
 /// One agent in the crew: its role, what it was told to do, and what it produced.
 pub struct Member {
-    pub name: &'static str,
+    pub id: String,
+    pub name: String,
     /// Role brief, appended to the system prompt for this member only.
-    pub brief: &'static str,
+    pub brief: String,
+    /// Configured model label shown in live output (or main model name).
+    pub model_label: String,
     pub status: MemberStatus,
     pub answer: String,
     pub tools: usize,
@@ -131,10 +136,29 @@ pub struct Member {
 }
 
 impl Member {
-    fn new(name: &'static str, brief: &'static str) -> Self {
+    fn new(name: &str, brief: &str) -> Self {
         Self {
-            name,
-            brief,
+            id: name.to_string(),
+            name: name.to_string(),
+            brief: brief.to_string(),
+            model_label: String::new(),
+            status: MemberStatus::Idle,
+            answer: String::new(),
+            tools: 0,
+            last_tool: String::new(),
+            error: None,
+            assignment: String::new(),
+            score: None,
+            reason: String::new(),
+        }
+    }
+
+    pub fn with_id(id: &str, name: &str, brief: &str, model_label: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            brief: brief.to_string(),
+            model_label: model_label.to_string(),
             status: MemberStatus::Idle,
             answer: String::new(),
             tools: 0,
@@ -168,6 +192,7 @@ impl Member {
                 }
             }
             LoopEvent::TurnComplete(_) => {}
+            LoopEvent::StepsUpdated(_) => {}
             LoopEvent::Finished { .. } => self.status = MemberStatus::Done,
             LoopEvent::Failed(message) => {
                 self.status = MemberStatus::Error;
@@ -318,24 +343,32 @@ fn with_brief(base_system: &str, brief: &str) -> String {
     }
 }
 
-/// The orchestrator's first turn: divide the task, one job per analyst.
-pub fn plan_prompt(base_system: &str) -> String {
+/// The orchestrator's first turn for dynamic subagents.
+pub fn plan_prompt_for(base_system: &str, analysts: &[(String, String)]) -> String {
     let mut out = with_brief(base_system, CREW[0].1);
     out.push_str("\n\nGive each of these analysts one job, sized to the task:\n");
-    for (role, brief) in ANALYSTS {
+    for (role, brief) in analysts {
         out.push_str(&format!("- {role}: {brief}\n"));
     }
-    out.push_str(
-        "\nReply with exactly one line per analyst, in this form, and nothing else:\n\
-         research-analyst: <the job, in one sentence>\n\
-         risk-analyst: <the job, in one sentence>\n\
-         critic-analyst: <the job, in one sentence>\n",
-    );
+    out.push_str("\nReply with exactly one line per analyst, in this form, and nothing else:\n");
+    for (role, _) in analysts {
+        out.push_str(&format!("{role}: <the job, in one sentence>\n"));
+    }
     out
 }
 
-/// The orchestrator's last turn: score the crew, then close the task.
-pub fn review_prompt(base_system: &str) -> String {
+/// The orchestrator's first turn: divide the task, one job per default analyst.
+#[cfg(test)]
+pub fn plan_prompt(base_system: &str) -> String {
+    let list: Vec<(String, String)> = ANALYSTS
+        .iter()
+        .map(|(r, b)| ((*r).to_string(), (*b).to_string()))
+        .collect();
+    plan_prompt_for(base_system, &list)
+}
+
+/// The orchestrator's last turn for dynamic subagents.
+pub fn review_prompt_for(base_system: &str, analysts: &[String]) -> String {
     let mut out = with_brief(base_system, CREW[0].1);
     out.push_str(&format!(
         "\n\nYour analysts have reported. Judge them, then close the task.\n\n\
@@ -343,27 +376,100 @@ pub fn review_prompt(base_system: &str) -> String {
          was given: {SCORE_MAX} exactly on assignment and useful, 0 acceptable but thin, \
          {SCORE_MIN} strayed off the job, ignored what it was told, or produced nothing \
          usable.\n\n\
-         Reply with exactly one line per analyst, in this form:\n\
-         research-analyst: <score> | <one short reason>\n\
-         risk-analyst: <score> | <one short reason>\n\
-         critic-analyst: <score> | <one short reason>\n\n\
-         Then a blank line, then the single recommendation the crew should act on.\n",
+         Reply with exactly one line per analyst, in this form:\n",
     ));
+    for role in analysts {
+        out.push_str(&format!("{role}: <score> | <one short reason>\n"));
+    }
+    out.push_str("\nThen a blank line, then the single recommendation the crew should act on.\n");
     out
 }
 
-/// An analyst's system prompt: its brief, plus whatever its record says about it.
-pub fn analyst_prompt(base_system: &str, role: &str, standings: &Standings) -> String {
-    let brief = CREW
-        .iter()
-        .find(|(name, _)| *name == role)
-        .map_or("", |(_, brief)| *brief);
-    let note = standing_note(standings.get(role));
+/// The orchestrator's last turn: score the default crew, then close the task.
+#[cfg(test)]
+pub fn review_prompt(base_system: &str) -> String {
+    let list: Vec<String> = ANALYSTS.iter().map(|(r, _)| (*r).to_string()).collect();
+    review_prompt_for(base_system, &list)
+}
+
+/// System prompt for any configured subagent, including standing notes.
+pub fn subagent_prompt(
+    base_system: &str,
+    role_id: &str,
+    brief: &str,
+    standings: &Standings,
+) -> String {
+    let note = standing_note(standings.get(role_id));
     if note.is_empty() {
         with_brief(base_system, brief)
     } else {
         with_brief(&with_brief(base_system, brief), &note)
     }
+}
+
+/// An analyst's system prompt: its brief, plus whatever its record says about it.
+#[cfg(test)]
+pub fn analyst_prompt(base_system: &str, role: &str, standings: &Standings) -> String {
+    let brief = CREW
+        .iter()
+        .find(|(name, _)| *name == role)
+        .map_or("", |(_, brief)| *brief);
+    subagent_prompt(base_system, role, brief, standings)
+}
+
+/// Dynamic plan parser for custom/configured role ids.
+pub fn parse_plan_for(text: &str, roles: &[String]) -> BTreeMap<String, String> {
+    let mut jobs = BTreeMap::new();
+    for line in text.lines() {
+        let folded = line.to_ascii_lowercase();
+        let found = roles
+            .iter()
+            .filter_map(|r| {
+                let r_low = r.to_ascii_lowercase();
+                folded.find(&r_low).map(|at| (r, at))
+            })
+            .min_by_key(|(_, at)| *at);
+        let Some((role, at)) = found else {
+            continue;
+        };
+        let Some(job) = after_role(line, role, at) else {
+            continue;
+        };
+        if !job.is_empty() {
+            jobs.insert(role.clone(), job);
+        }
+    }
+    jobs
+}
+
+/// Dynamic review parser for custom/configured role ids.
+pub fn parse_review_for(text: &str, roles: &[String]) -> (Vec<(String, i8, String)>, String) {
+    let mut scores = Vec::new();
+    let mut verdict: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        let folded = line.to_ascii_lowercase();
+        let found = roles
+            .iter()
+            .filter_map(|r| {
+                let r_low = r.to_ascii_lowercase();
+                folded.find(&r_low).map(|at| (r, at))
+            })
+            .min_by_key(|(_, at)| *at);
+        let parsed = found.and_then(|(role, at)| {
+            let (_, after_colon) = line[at + role.len()..].split_once(':')?;
+            let (number, reason) = match after_colon.split_once('|') {
+                Some((number, reason)) => (number, reason.trim().to_string()),
+                None => (after_colon, String::new()),
+            };
+            let score: i8 = number.trim().parse().ok()?;
+            Some((role.clone(), score.clamp(SCORE_MIN, SCORE_MAX), reason))
+        });
+        match parsed {
+            Some(scored) => scores.push(scored),
+            None => verdict.push(line),
+        }
+    }
+    (scores, verdict.join("\n").trim().to_string())
 }
 
 /// Which analyst a line is addressed to, and where its name starts. Tolerates
@@ -396,6 +502,7 @@ fn after_role(line: &str, role: &str, at: usize) -> Option<String> {
 /// shortcut: plain `role: job` lines only. A plan that yields nothing leaves the
 /// map empty and every analyst gets a generic job; upgrade only if a stricter
 /// format starts failing against a real model.
+#[cfg(test)]
 pub fn parse_plan(text: &str) -> BTreeMap<&'static str, String> {
     let mut jobs = BTreeMap::new();
     for line in text.lines() {
@@ -493,7 +600,7 @@ impl Swarm {
                     report.push_str(&format!("- Score: {score:+} — {}\n", member.reason));
                 }
             }
-            if let Some(standing) = self.standing.get(member.name) {
+            if let Some(standing) = self.standing.get(member.name.as_str()) {
                 report.push_str(&format!(
                     "- Standing: {:+} total, last {:+}\n",
                     standing.total, standing.last
@@ -539,8 +646,17 @@ impl Swarm {
     }
 
     /// Hand the crew its event pipe and clear the previous run.
+    #[cfg(test)]
     pub fn start(&mut self, rx: Receiver<CrewEvent>) {
         self.clear();
+        self.phase = Phase::Planning;
+        self.standing = load_standings();
+        self.rx = Some(rx);
+    }
+
+    /// Hand the crew its event pipe with an explicit dynamic member roster.
+    pub fn start_with_roster(&mut self, rx: Receiver<CrewEvent>, roster: Vec<Member>) {
+        self.members = roster;
         self.phase = Phase::Planning;
         self.standing = load_standings();
         self.rx = Some(rx);
@@ -556,7 +672,12 @@ impl Swarm {
 
     fn clear(&mut self) {
         for member in self.members.iter_mut() {
-            *member = Member::new(member.name, member.brief);
+            *member = Member::with_id(
+                &member.id,
+                &member.name,
+                &member.brief,
+                &member.model_label,
+            );
         }
     }
 
@@ -566,9 +687,10 @@ impl Swarm {
     }
 
     fn headline(&self) -> String {
+        let analysts = self.members.len().saturating_sub(1);
         match self.phase {
             Phase::Idle => format!("{} members · full tool access", self.members.len()),
-            Phase::Done => format!("done · {} of {} scored", self.scored(), ANALYSTS.len()),
+            Phase::Done => format!("done · {} of {analysts} scored", self.scored()),
             phase => {
                 let running = self.members.iter().filter(|m| m.running()).count();
                 format!("{} · {running} running", phase.label())
@@ -678,17 +800,151 @@ impl Swarm {
     }
 }
 
-/// What the Members panel asked the app to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What the Members / Agents panel asked the app to do.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SwarmAction {
     Run,
     Stop,
+    SaveConfig,
+    SendToChat(String),
 }
 
-/// Draw the crew. `task` is what Run would fan out; the panel never edits it.
-pub fn show(ui: &mut Ui, swarm: &mut Swarm, task: &mut String) -> Option<SwarmAction> {
+/// Draw the Agents crew, with dropdown model choosers for lead & every subagent.
+pub fn show(
+    ui: &mut Ui,
+    swarm: &mut Swarm,
+    task: &mut String,
+    config: &mut Config,
+    catalog: &[ModelInfo],
+) -> Option<SwarmAction> {
     let mut action = None;
     let busy = swarm.busy();
+
+    let main_name = if config.model_id.trim().is_empty() {
+        "Main model".to_string()
+    } else {
+        harness_core::models::display_name(&config.model_id)
+    };
+    let follow_main = format!("Follow main ({main_name})");
+
+    // Configurable model dropdowns + editable subagents
+    egui::CollapsingHeader::new(RichText::new("Subagent models & roster").color(theme::text()).strong())
+        .default_open(!busy)
+        .show(ui, |ui| {
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Lead").small());
+                if model_dropdown(
+                    ui,
+                    "crew-lead-model",
+                    &mut config.lead_model_id,
+                    &follow_main,
+                    catalog,
+                    195.0,
+                ) {
+                    changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Subagent default").small());
+                if model_dropdown(
+                    ui,
+                    "crew-subagent-default",
+                    &mut config.subagent_default_model_id,
+                    &follow_main,
+                    catalog,
+                    165.0,
+                ) {
+                    changed = true;
+                }
+            });
+            ui.add_space(2.0);
+            let default_sub_label = if config.subagent_default_model_id.trim().is_empty() {
+                format!("Default ({main_name})")
+            } else {
+                format!(
+                    "Default ({})",
+                    harness_core::models::display_name(&config.subagent_default_model_id)
+                )
+            };
+
+            let mut remove_idx: Option<usize> = None;
+            let total_agents = config.agents.len();
+            for (idx, agent) in config.agents.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    if ui.checkbox(&mut agent.enabled, "").changed() {
+                        changed = true;
+                    }
+                    ui.add(
+                        egui::Label::new(RichText::new(&agent.name).small().strong()).truncate(),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if total_agents > 1 && ui.small_button("x").on_hover_text("Remove subagent").clicked() {
+                            remove_idx = Some(idx);
+                        }
+                        if model_dropdown(
+                            ui,
+                            ("agent-model", idx, agent.id.as_str()),
+                            &mut agent.model_id,
+                            &default_sub_label,
+                            catalog,
+                            155.0,
+                        ) {
+                            changed = true;
+                        }
+                    });
+                });
+                let brief_id = ui.make_persistent_id(("agent-brief-open", idx));
+                let open_brief: bool = ui.memory(|m| m.data.get_temp(brief_id)).unwrap_or(false);
+                if ui
+                    .small_button(if open_brief { "▾ brief" } else { "▸ brief & name" })
+                    .clicked()
+                {
+                    ui.memory_mut(|m| m.data.insert_temp(brief_id, !open_brief));
+                }
+                if open_brief {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Name").small());
+                        if text_edit(
+                            ui,
+                            &mut agent.name,
+                            TextEditSpec::singleline().width(160.0),
+                        )
+                        .changed()
+                        {
+                            changed = true;
+                        }
+                    });
+                    if text_edit(
+                        ui,
+                        &mut agent.brief,
+                        TextEditSpec::multiline().rows(2).width(f32::INFINITY),
+                    )
+                    .changed()
+                    {
+                        changed = true;
+                    }
+                }
+            }
+            if let Some(idx) = remove_idx {
+                config.agents.remove(idx);
+                changed = true;
+            }
+            if ui.small_button("+ Add subagent").clicked() {
+                let n = config.agents.len() + 1;
+                config.agents.push(AgentMemberConfig {
+                    id: format!("specialist-{n}"),
+                    name: format!("Specialist {n}"),
+                    brief: "Focused specialist subagent: verify facts from code, tests, or browser output before reporting.".into(),
+                    model_id: String::new(),
+                    enabled: true,
+                });
+                changed = true;
+            }
+            if changed {
+                action = Some(SwarmAction::SaveConfig);
+            }
+        });
 
     // The task lives here, not in the chat composer: the crew is scratch work
     // and must not compete with an open conversation for the draft.
@@ -711,10 +967,12 @@ pub fn show(ui: &mut Ui, swarm: &mut Swarm, task: &mut String) -> Option<SwarmAc
                     action = Some(SwarmAction::Stop);
                 }
             } else {
-                let ready = !task.trim().is_empty();
-                let hint = if ready {
-                    "The orchestrator divides this task, the analysts run their jobs in \
-                     parallel with full tool access, then the orchestrator scores them"
+                let any_enabled = config.agents.iter().any(|a| a.enabled);
+                let ready = !task.trim().is_empty() && any_enabled;
+                let hint = if !any_enabled {
+                    "Enable at least one subagent above"
+                } else if ready {
+                    "Run lead + enabled subagents concurrently with their chosen dropdown models"
                 } else {
                     "Type the task for the crew above — Run unlocks once there is text"
                 };
@@ -724,6 +982,26 @@ pub fn show(ui: &mut Ui, swarm: &mut Swarm, task: &mut String) -> Option<SwarmAc
                     .clicked()
                 {
                     action = Some(SwarmAction::Run);
+                }
+                if swarm.phase == Phase::Done {
+                    if let Some(lead) = swarm.members.first() {
+                        if !lead.answer.trim().is_empty()
+                            && ui
+                                .small_button("To chat")
+                                .on_hover_text("Insert the crew verdict into your chat composer")
+                                .clicked()
+                        {
+                            let (_, verdict) = parse_review(&lead.answer);
+                            let body = if verdict.is_empty() {
+                                lead.answer.clone()
+                            } else {
+                                verdict
+                            };
+                            action = Some(SwarmAction::SendToChat(format!(
+                                "Crew recommendation:\n{body}"
+                            )));
+                        }
+                    }
                 }
                 if ui
                     .small_button("Save report")
@@ -757,6 +1035,9 @@ pub fn show(ui: &mut Ui, swarm: &mut Swarm, task: &mut String) -> Option<SwarmAc
         .show(ui, |ui| {
             for member in &swarm.members {
                 let mut head = format!("• {} — {}", member.name, member.status.label());
+                if !member.model_label.is_empty() {
+                    head.push_str(&format!(" [{}]", member.model_label));
+                }
                 if member.running() && member.tools > 0 {
                     head.push_str(&format!(" · {} tools", member.tools));
                 }
@@ -805,7 +1086,7 @@ pub fn show(ui: &mut Ui, swarm: &mut Swarm, task: &mut String) -> Option<SwarmAc
                                 };
                                 ui.label(RichText::new(line).color(color).small());
                             }
-                            if let Some(standing) = swarm.standing.get(member.name) {
+                            if let Some(standing) = swarm.standing.get(member.id.as_str()) {
                                 ui.label(
                                     RichText::new(format!(
                                         "Standing {:+} · last {:+}",
@@ -1071,6 +1352,7 @@ mod tests {
     #[test]
     fn a_run_report_carries_the_task_scores_and_standings() {
         let mut swarm = Swarm::new();
+        swarm.standing.clear();
         swarm.export_report("nothing scored");
         assert!(
             swarm
@@ -1082,6 +1364,7 @@ mod tests {
             swarm.last_report
         );
         let mut scored = Swarm::new();
+        scored.standing.clear();
         scored.members[0].answer = "the plan".to_owned();
         scored.members[1].assignment = "check the edge cases".to_owned();
         scored.members[1].tools = 4;

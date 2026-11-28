@@ -47,8 +47,14 @@ pub enum SettingsAction {
     Reconnect,
     /// Open the full provider → model factory.
     OpenModelFactory,
+    /// Open Model Factory straight to "+ Add custom provider".
+    OpenAddProvider,
+    /// Switch to the Agents crew panel.
+    OpenAgents,
     /// Open the searchable plugin browser.
     OpenBrowser,
+    ImportAuraMcp,
+    DisableFailing,
     RemoveServer(String),
     Close,
 }
@@ -82,9 +88,11 @@ pub struct SettingsState<'a> {
     pub key_present: bool,
     /// One line per configured MCP server: "name — connected|disabled|failed".
     pub mcp_status: &'a [String],
+    pub mcp_errors: &'a std::collections::BTreeMap<String, String>,
     /// One line per configured command tool: "name — command".
     pub cmd_tools: &'a [String],
     pub tool_count: usize,
+    pub catalog: &'a [models::ModelInfo],
 }
 
 pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction> {
@@ -130,22 +138,37 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
             ui.separator();
 
             if tab == SettingsTab::Model {
-                ui.label(RichText::new("API keys").color(theme::text()).strong());
+                let configured_names: Vec<&str> = models::PROVIDERS
+                    .iter()
+                    .filter(|p| !p.local && models::is_configured(p))
+                    .map(|p| p.name)
+                    .collect();
+                ui.label(RichText::new("Providers & plans").color(theme::text()).strong());
+                ui.small(
+                    RichText::new(if configured_names.is_empty() {
+                        "No remote API keys detected yet. Use Model Factory to configure any provider, Coding Plan, PAYG API Plan, or Custom gateway in ~/.aura/keys.json.".to_string()
+                    } else {
+                        format!(
+                            "Ready ({}): {}",
+                            configured_names.len(),
+                            configured_names.join(", ")
+                        )
+                    })
+                    .color(if configured_names.is_empty() { theme::warn() } else { theme::ok() }),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Configure providers & Coding / PAYG plans…").clicked() {
+                        action = Some(SettingsAction::OpenModelFactory);
+                    }
+                    if ui.button("+ Add custom OpenAI-compatible provider…").clicked() {
+                        action = Some(SettingsAction::OpenAddProvider);
+                    }
+                });
+                ui.add_space(6.0);
                 ui.label(
                     RichText::new(
-                        "The factory reads ~/.aura/keys.json and ~/.aura/.env — the same keys \
-                         Aura Code uses. The field below is a DeepSeek fallback stored in \
-                         ~/.config/aura-harness/credentials (0600).",
+                        "Legacy DeepSeek fallback (stored in ~/.config/aura-harness/credentials, 0600):",
                     )
-                    .color(theme::dim())
-                    .small(),
-                );
-                ui.label(
-                    RichText::new(if state.key_present {
-                        "A fallback key is stored."
-                    } else {
-                        "No fallback key stored. Keys from ~/.aura are enough for most providers."
-                    })
                     .color(theme::dim())
                     .small(),
                 );
@@ -155,18 +178,21 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
                         state.key_input,
                         crate::ui::TextEditSpec::singleline()
                             .password(true)
-                            .hint("sk-… (DeepSeek fallback)")
-                            .width(360.0),
+                            .hint(if state.key_present {
+                                "fallback stored — paste new DeepSeek key to replace"
+                            } else {
+                                "sk-… (optional DeepSeek fallback)"
+                            })
+                            .width(340.0),
                     );
-                    if ui.button("Save key").clicked() {
+                    if ui.button("Save fallback").clicked() {
                         action = Some(SettingsAction::SaveKey(state.key_input.clone()));
                     }
                 });
                 ui.add_space(10.0);
-                ui.add_space(10.0);
                 ui.separator();
                 ui.add_space(4.0);
-                ui.label(RichText::new("Model").color(theme::text()).strong());
+                ui.label(RichText::new("Active model").color(theme::text()).strong());
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new(models::display_name(&state.config.model_id))
@@ -333,48 +359,139 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
                 ui.add_space(10.0);
             }
             if tab == SettingsTab::Agent {
-                ui.label(RichText::new("Built-in tools").color(theme::text()).strong());
-                ui.small("Always on. Mutating tools ask for your approval before running.");
-                for tool in harness_core::builtins::BuiltinTool::all() {
-                    let def = tool.def();
-                    let policy = if tool.needs_approval() {
-                        "approval"
-                    } else {
-                        "auto"
-                    };
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(def.name.as_str()).monospace().strong());
-                        ui.small(def.description);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.small(policy);
-                        });
-                    });
-                }
-                ui.add_space(6.0);
+                ui.label(RichText::new("Workspace & Loop Mode").color(theme::text()).strong());
+                ui.horizontal(|ui| {
+                    ui.label("Project root");
+                    crate::ui::text_edit(
+                        ui,
+                        &mut state.config.project_root,
+                        crate::ui::TextEditSpec::singleline()
+                            .hint("path to project folder (empty = current dir)")
+                            .width(280.0),
+                    );
+                    if ui.button("Pick folder…").clicked() {
+                        let picked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            rfd::FileDialog::new().pick_folder()
+                        }))
+                        .unwrap_or(None);
+                        if let Some(dir) = picked {
+                            state.config.project_root = dir.display().to_string();
+                            let _ = state.config.save();
+                        }
+                    }
+                });
+                ui.add_space(4.0);
+                let active_preset = if state.config.agent_preset.trim().is_empty() {
+                    "agy".to_string()
+                } else {
+                    state.config.agent_preset.trim().to_string()
+                };
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Loop mode");
+                    for (id, label, tip) in [
+                        ("agy", "AGY Autonomous", "Structured plan (update_steps), parallel read/subagent waves, and verification"),
+                        ("tight", "Tight & Direct", "Concise factual responses and exact file/line outputs"),
+                        ("research", "Research & Audit", "Thorough parallel investigation with citations before acting"),
+                        ("custom", "Custom only", "Only your own system prompt below"),
+                    ] {
+                        let selected = active_preset == id;
+                        if ui
+                            .selectable_label(selected, label)
+                            .on_hover_text(tip)
+                            .clicked()
+                        {
+                            state.config.agent_preset = id.to_string();
+                        }
+                    }
+                });
+                ui.add_space(8.0);
+                ui.separator();
+
+                ui.label(RichText::new("Orchestrator & Subagent Models").color(theme::text()).strong());
+                ui.small(
+                    RichText::new(
+                        "Pick models from the dropdowns for the Lead orchestrator and spawned subagents. Custom per-subagent overrides live in the Agents panel.",
+                    )
+                    .color(theme::dim()),
+                );
+                let main_label = if state.config.model_id.trim().is_empty() {
+                    "Main model".to_string()
+                } else {
+                    models::display_name(&state.config.model_id)
+                };
+                let follow = format!("Follow main ({main_label})");
+                ui.horizontal(|ui| {
+                    ui.label("Lead model");
+                    crate::ui::model_dropdown(
+                        ui,
+                        "settings-lead-model",
+                        &mut state.config.lead_model_id,
+                        &follow,
+                        state.catalog,
+                        280.0,
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Subagent default");
+                    crate::ui::model_dropdown(
+                        ui,
+                        "settings-subagent-model",
+                        &mut state.config.subagent_default_model_id,
+                        &follow,
+                        state.catalog,
+                        260.0,
+                    );
+                    if ui.button("Configure subagents…").clicked() {
+                        action = Some(SettingsAction::OpenAgents);
+                    }
+                });
+                ui.add_space(8.0);
+                ui.separator();
+
+                ui.label(RichText::new("Permissions & Instructions").color(theme::text()).strong());
                 ui.checkbox(
                     &mut state.config.auto_approve,
                     "Auto-approve tool calls (full access)",
                 );
                 ui.small(
-                    "On: shell, write_file, edit_file and command tools run without asking.                  Off: every mutating tool shows an approve/reject card first.",
+                    "On: shell, write_file, edit_file and command tools run without asking. Off: mutating tools ask before running.",
                 );
-                ui.add_space(8.0);
-
-                ui.add_space(8.0);
-                ui.separator();
-                ui.label("System prompt");
+                ui.add_space(4.0);
+                ui.label("Custom system prompt");
                 crate::ui::text_edit(
                     ui,
                     &mut state.config.system_prompt,
                     crate::ui::TextEditSpec::multiline()
-                        .hint("Optional instructions prepended to every conversation")
-                        .rows(3)
+                        .hint("Optional instructions appended to every conversation")
+                        .rows(4)
                         .width(f32::INFINITY),
                 );
                 ui.checkbox(
                     &mut state.config.agentmem_mirror,
                     "Mirror session summaries to the shared AGENTMEM store",
                 );
+                ui.add_space(6.0);
+                egui::CollapsingHeader::new(
+                    RichText::new(format!(
+                        "Built-in & active tools ({} total)",
+                        state.tool_count
+                    ))
+                    .color(theme::dim()),
+                )
+                .default_open(false)
+                .show(ui, |ui| {
+                    for tool in harness_core::builtins::BuiltinTool::all() {
+                        let def = tool.def();
+                        let policy = if tool.needs_approval() { "approval" } else { "auto" };
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(def.name.as_str()).monospace().strong().small());
+                            ui.small(def.description);
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.small(policy);
+                            });
+                        });
+                    }
+                });
             }
             if tab == SettingsTab::Plugins {
                 ui.separator();
@@ -414,23 +531,31 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
                 // ---- get plugins ------------------------------------------------
                 ui.add_space(8.0);
                 ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Get plugins").color(theme::text()).strong());
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Get & manage plugins").color(theme::text()).strong());
                     if ui
-                        .button("Browse…")
-                        .on_hover_text("Search a list of connectable MCP servers")
+                        .button("Search & Add Plugins…")
+                        .on_hover_text("Open the unified plugin search, catalog, online MCP registry, and JSON import")
                         .clicked()
                     {
                         action = Some(SettingsAction::OpenBrowser);
                     }
+                    if ui
+                        .button("Import ~/.aura/mcp.json")
+                        .on_hover_text("Import MCP servers declared in Aura Code's ~/.aura/mcp.json")
+                        .clicked()
+                    {
+                        action = Some(SettingsAction::ImportAuraMcp);
+                    }
+                    if !state.mcp_errors.is_empty()
+                        && ui
+                            .button("Disable failing")
+                            .on_hover_text("Disable servers that failed to boot so startup stays clean & fast")
+                            .clicked()
+                    {
+                        action = Some(SettingsAction::DisableFailing);
+                    }
                 });
-                ui.label(
-                    RichText::new(
-                        "Search a curated catalogue, servers found on this machine, or paste a launch command.",
-                    )
-                    .color(theme::dim())
-                    .small(),
-                );
 
                 // ---- configured -------------------------------------------------
                 ui.add_space(8.0);
@@ -445,10 +570,13 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut server.enabled, "");
                         ui.label(RichText::new(name).color(theme::text()).monospace().small());
-                        ui.label(
-                            RichText::new(format!("{} {}", server.command, server.args.join(" ")))
-                                .color(theme::dim())
-                                .small(),
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(format!("{} {}", server.command, server.args.join(" ")))
+                                    .color(theme::dim())
+                                    .small(),
+                            )
+                            .truncate(),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.small_button("Remove").clicked() {
@@ -456,6 +584,13 @@ pub fn show(ui: &mut Ui, state: &mut SettingsState<'_>) -> Option<SettingsAction
                             }
                         });
                     });
+                    if let Some(err) = state.mcp_errors.get(name) {
+                        ui.label(
+                            RichText::new(format!("   error: {err}"))
+                                .color(theme::danger())
+                                .small(),
+                        );
+                    }
                 }
                 for (name, tool) in state.plugins.cmd.iter_mut() {
                     ui.horizontal(|ui| {
@@ -507,6 +642,7 @@ fn effort_label(e: EffortChoice) -> &'static str {
 }
 
 /// One-line MCP status used by both settings and the sidebar footer.
+#[allow(dead_code)]
 pub fn mcp_line(name: &str, enabled: bool, connected: bool) -> String {
     let state = if !enabled {
         "disabled"

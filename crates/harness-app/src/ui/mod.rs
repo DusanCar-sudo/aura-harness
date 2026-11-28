@@ -83,6 +83,316 @@ pub fn row_button(
     response
 }
 
+fn combo_trigger_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    width: f32,
+    is_open: bool,
+) -> egui::Response {
+    let height = ui.spacing().interact_size.y;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let vis = if is_open {
+            &ui.visuals().widgets.open
+        } else {
+            ui.style().interact(&resp)
+        };
+        ui.painter()
+            .rect(rect, vis.rounding, vis.weak_bg_fill, vis.bg_stroke);
+        let arrow_w = 16.0;
+        let text_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.left() + 6.0, rect.top() + 2.0),
+            egui::pos2((rect.right() - arrow_w).max(rect.left() + 8.0), rect.bottom() - 2.0),
+        );
+        let font = egui::TextStyle::Small.resolve(ui.style());
+        let galley = ui.painter().layout_no_wrap(label.to_string(), font, vis.text_color());
+        let text_y = text_rect.center().y - galley.size().y * 0.5;
+        ui.painter()
+            .with_clip_rect(text_rect)
+            .galley(egui::pos2(text_rect.left(), text_y), galley, vis.text_color());
+
+        let cx = rect.right() - 9.0;
+        let cy = rect.center().y;
+        let pts = if is_open {
+            vec![
+                egui::pos2(cx - 3.5, cy + 2.0),
+                egui::pos2(cx + 3.5, cy + 2.0),
+                egui::pos2(cx, cy - 2.5),
+            ]
+        } else {
+            vec![
+                egui::pos2(cx - 3.5, cy - 2.0),
+                egui::pos2(cx + 3.5, cy - 2.0),
+                egui::pos2(cx, cy + 2.5),
+            ]
+        };
+        ui.painter()
+            .add(egui::Shape::convex_polygon(pts, vis.fg_stroke.color, egui::Stroke::NONE));
+    }
+    resp
+}
+
+fn pick_model_row(
+    ui: &mut egui::Ui,
+    selected_model: &mut String,
+    value: &str,
+    label: &str,
+) -> bool {
+    if ui
+        .selectable_label(selected_model == value, label)
+        .clicked()
+    {
+        *selected_model = value.to_string();
+        ui.memory_mut(|m| m.close_popup());
+        return true;
+    }
+    false
+}
+
+/// Reusable searchable dropdown chooser for selecting any model id (e.g. for
+/// Lead Orchestrator, Subagent Default, or per-subagent overrides). Returns
+/// `true` whenever `selected_model` changed.
+pub fn model_dropdown(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash,
+    selected_model: &mut String,
+    empty_label: &str,
+    models: &[harness_core::models::ModelInfo],
+    width: f32,
+) -> bool {
+    let before = selected_model.clone();
+    let shown = if selected_model.trim().is_empty() {
+        empty_label.to_string()
+    } else {
+        let name = harness_core::models::display_name(selected_model);
+        if name == selected_model.as_str() {
+            name
+        } else {
+            format!("{name} ({})", selected_model.trim())
+        }
+    };
+
+    let button_id = ui.make_persistent_id(&id_salt);
+    let popup_id = button_id.with("popup");
+    let q_id = button_id.with("filter");
+    let mut query: String = ui.memory(|m| m.data.get_temp(q_id)).unwrap_or_default();
+
+    let is_open = ui.memory(|m| m.is_popup_open(popup_id));
+    let button_resp = combo_trigger_button(ui, &shown, width, is_open);
+    let mut just_opened = false;
+    if button_resp.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(popup_id));
+        just_opened = ui.memory(|m| m.is_popup_open(popup_id));
+    }
+
+    let screen = ui.ctx().screen_rect();
+    let space_below = screen.bottom() - button_resp.rect.bottom();
+    let space_above = button_resp.rect.top() - screen.top();
+    let placement = if space_below < 320.0 && space_above > space_below {
+        egui::AboveOrBelow::Above
+    } else {
+        egui::AboveOrBelow::Below
+    };
+
+    // Use `CloseOnClickOutside` instead of `ComboBox` (`CloseOnClick`), because
+    // `CloseOnClick` closes the popup as soon as the user clicks inside the
+    // filter TextEdit search box.
+    let mut picked = false;
+    egui::popup_above_or_below_widget(
+        ui,
+        popup_id,
+        &button_resp,
+        placement,
+        egui::PopupCloseBehavior::CloseOnClickOutside,
+        |ui| {
+            ui.set_min_width(width.max(350.0));
+            let filter_resp = ui
+                .horizontal(|ui| {
+                    ui.label(egui::RichText::new("Filter").color(theme::dim()).small());
+                    let r = text_edit(
+                        ui,
+                        &mut query,
+                        TextEditSpec::singleline()
+                            .hint("provider, model, local, free…")
+                            .width(220.0),
+                    );
+                    if !query.is_empty()
+                        && ui.small_button("x").on_hover_text("Clear filter").clicked()
+                    {
+                        query.clear();
+                        r.request_focus();
+                    }
+                    r
+                })
+                .inner;
+            if just_opened {
+                filter_resp.request_focus();
+            }
+            ui.separator();
+
+            egui::ScrollArea::vertical()
+                .id_salt(popup_id.with("scroll"))
+                .max_height(310.0)
+                .show(ui, |ui| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    if pick_model_row(ui, selected_model, "", empty_label) {
+                        picked = true;
+                    }
+                    ui.separator();
+
+                    let q = query.trim().to_lowercase();
+                    let matched: Vec<&harness_core::models::ModelInfo> =
+                        models.iter().filter(|m| model_matches(m, &q)).collect();
+
+                    if matched.is_empty() {
+                        ui.small(
+                            egui::RichText::new("No models match filter").color(theme::dim()),
+                        );
+                        return;
+                    }
+
+                    let groups = group_models_by_provider(&matched);
+                    let selected_family = if selected_model.trim().is_empty() {
+                        ""
+                    } else {
+                        harness_core::models::provider_for_model(selected_model)
+                    };
+
+                    for (idx, g) in groups.iter().enumerate() {
+                        if idx > 0 && !q.is_empty() {
+                            ui.add_space(4.0);
+                        }
+                        let header = if g.tag.is_empty() {
+                            format!("{}  ({})", g.display_name, g.models.len())
+                        } else {
+                            format!("{}  ({} · {})", g.display_name, g.models.len(), g.tag)
+                        };
+                        let header_color = match g.tier {
+                            0 | 1 => theme::accent(),
+                            2 => theme::ok(),
+                            _ => theme::dim(),
+                        };
+
+                        if q.is_empty() {
+                            let default_open = g.family == selected_family
+                                || (!selected_family.is_empty()
+                                    && g.models.iter().any(|m| m.id == *selected_model));
+                            egui::CollapsingHeader::new(
+                                egui::RichText::new(header).color(header_color).small().strong(),
+                            )
+                            .id_salt(popup_id.with(("prov", &g.family)))
+                            .default_open(default_open)
+                            .show(ui, |ui| {
+                                for m in &g.models {
+                                    let label = format_model_option_label(m);
+                                    if pick_model_row(ui, selected_model, &m.id, &label) {
+                                        picked = true;
+                                    }
+                                }
+                            });
+                        } else {
+                            ui.small(
+                                egui::RichText::new(header).color(header_color).strong(),
+                            );
+                            for m in &g.models {
+                                let label = format_model_option_label(m);
+                                if pick_model_row(ui, selected_model, &m.id, &label) {
+                                    picked = true;
+                                }
+                            }
+                        }
+                    }
+                });
+        },
+    );
+
+    if picked || !ui.memory(|m| m.is_popup_open(popup_id)) {
+        query.clear();
+    }
+    ui.memory_mut(|m| m.data.insert_temp(q_id, query));
+    *selected_model != before
+}
+
+struct ProviderModelGroup<'a> {
+    tier: u8,
+    family: String,
+    display_name: String,
+    tag: &'static str,
+    models: Vec<&'a harness_core::models::ModelInfo>,
+}
+
+fn provider_tier_and_tag(family: &str) -> (u8, &'static str) {
+    if harness_core::provider::custom_providers()
+        .iter()
+        .any(|c| c.id == family)
+    {
+        return (0, "custom");
+    }
+    if let Some(spec) = harness_core::models::provider(family) {
+        if spec.local {
+            return (1, "local");
+        }
+        if harness_core::models::is_configured(spec) {
+            return (2, "ready");
+        }
+        return (3, "");
+    }
+    (3, "")
+}
+
+fn group_models_by_provider<'a>(
+    models: &[&'a harness_core::models::ModelInfo],
+) -> Vec<ProviderModelGroup<'a>> {
+    let mut by_family: std::collections::BTreeMap<String, Vec<&'a harness_core::models::ModelInfo>> =
+        std::collections::BTreeMap::new();
+    for &m in models {
+        by_family.entry(m.family.clone()).or_default().push(m);
+    }
+    let mut groups: Vec<ProviderModelGroup<'a>> = by_family
+        .into_iter()
+        .map(|(family, items)| {
+            let (tier, tag) = provider_tier_and_tag(&family);
+            let display_name = harness_core::models::provider_display_name(&family);
+            ProviderModelGroup {
+                tier,
+                family,
+                display_name,
+                tag,
+                models: items,
+            }
+        })
+        .collect();
+    groups.sort_by(|a, b| {
+        a.tier
+            .cmp(&b.tier)
+            .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
+    });
+    groups
+}
+
+fn format_model_option_label(m: &harness_core::models::ModelInfo) -> String {
+    if m.free && m.speed.to_lowercase().contains("local") {
+        format!("{} · {} [local]", m.name, m.id)
+    } else if m.free {
+        format!("{} · {} [free]", m.name, m.id)
+    } else {
+        format!("{} · {}", m.name, m.id)
+    }
+}
+
+fn model_matches(m: &harness_core::models::ModelInfo, q: &str) -> bool {
+    if q.is_empty() {
+        return true;
+    }
+    let prov = harness_core::models::provider_display_name(&m.family).to_lowercase();
+    m.name.to_lowercase().contains(q)
+        || m.id.to_lowercase().contains(q)
+        || m.family.to_lowercase().contains(q)
+        || prov.contains(q)
+        || (q == "free" && m.free)
+        || (q == "local" && m.speed.to_lowercase().contains("local"))
+}
+
 /// What the right-hand panel is showing. The preview lives in the same box as
 /// the file tree, one tab over, so a build can be watched where it is edited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -413,5 +723,185 @@ mod text_edit_tests {
         assert_eq!(byte_index(text, 1), 1);
         assert_eq!(byte_index(text, 2), 3);
         assert_eq!(byte_index(text, 99), text.len());
+    }
+}
+
+#[cfg(test)]
+mod model_dropdown_tests {
+    use super::*;
+    use harness_core::models::ModelInfo;
+
+    fn sample_models() -> Vec<ModelInfo> {
+        vec![
+            ModelInfo {
+                id: "lmstudio/liquid/lfm2.5-1.2b".into(),
+                name: "LFM2.5 1.2B Instruct".into(),
+                family: "lmstudio".into(),
+                speed: "Local".into(),
+                free: true,
+            },
+            ModelInfo {
+                id: "aura-local/lfm3-1.7b-aura-grounded".into(),
+                name: "LFM3 1.7B Aura Grounded".into(),
+                family: "aura-local".into(),
+                speed: "Local".into(),
+                free: true,
+            },
+            ModelInfo {
+                id: "deepseek/deepseek-chat".into(),
+                name: "DeepSeek Chat".into(),
+                family: "deepseek".into(),
+                speed: "fast".into(),
+                free: false,
+            },
+        ]
+    }
+
+    #[test]
+    fn groups_models_by_provider_with_local_tier_first() {
+        let models = sample_models();
+        let refs: Vec<&ModelInfo> = models.iter().collect();
+        let groups = group_models_by_provider(&refs);
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].tag, "local");
+        assert_eq!(groups[1].tag, "local");
+        assert!(matches!(groups[0].family.as_str(), "aura-local" | "lmstudio"));
+    }
+
+    #[test]
+    fn clicking_search_box_inside_dropdown_keeps_popup_open() {
+        let ctx = egui::Context::default();
+        let models = sample_models();
+        let mut selected = String::new();
+        let mut button_rect = egui::Rect::NOTHING;
+        let mut popup_id = egui::Id::NULL;
+
+        let screen = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(800.0, 600.0),
+        ));
+
+        // Frame 1: render closed button to measure its rect.
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: screen,
+                time: Some(1.0),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let top_left = ui.next_widget_position();
+                    button_rect = egui::Rect::from_min_size(
+                        top_left,
+                        egui::vec2(180.0, ui.spacing().interact_size.y),
+                    );
+                    model_dropdown(
+                        ui,
+                        "subagent-test",
+                        &mut selected,
+                        "Follow main",
+                        &models,
+                        180.0,
+                    );
+                    popup_id = ui.make_persistent_id("subagent-test").with("popup");
+                });
+            },
+        );
+
+        // Frame 2-4: hover, press & release on button to open popup.
+        let click_pos = button_rect.center();
+        let steps: [(f64, Vec<egui::Event>); 3] = [
+            (1.1, vec![egui::Event::PointerMoved(click_pos)]),
+            (
+                1.2,
+                vec![egui::Event::PointerButton {
+                    pos: click_pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            ),
+            (
+                1.3,
+                vec![egui::Event::PointerButton {
+                    pos: click_pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            ),
+        ];
+        for (t, events) in steps {
+            let input = egui::RawInput {
+                screen_rect: screen,
+                time: Some(t),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    model_dropdown(
+                        ui,
+                        "subagent-test",
+                        &mut selected,
+                        "Follow main",
+                        &models,
+                        180.0,
+                    );
+                });
+            });
+        }
+        assert!(
+            ctx.memory(|m| m.is_popup_open(popup_id)),
+            "expected popup {popup_id:?} to open after clicking {click_pos:?} (button_rect={button_rect:?})"
+        );
+
+        // Frame 5-7: hover and click directly inside the filter TextEdit box.
+        let search_pos = egui::pos2(button_rect.left() + 80.0, button_rect.bottom() + 18.0);
+        let search_steps: [(f64, Vec<egui::Event>); 3] = [
+            (2.0, vec![egui::Event::PointerMoved(search_pos)]),
+            (
+                2.1,
+                vec![egui::Event::PointerButton {
+                    pos: search_pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            ),
+            (
+                2.2,
+                vec![egui::Event::PointerButton {
+                    pos: search_pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            ),
+        ];
+        for (t, events) in search_steps {
+            let input = egui::RawInput {
+                screen_rect: screen,
+                time: Some(t),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    model_dropdown(
+                        ui,
+                        "subagent-test",
+                        &mut selected,
+                        "Follow main",
+                        &models,
+                        180.0,
+                    );
+                });
+            });
+        }
+        assert!(
+            ctx.memory(|m| m.is_popup_open(popup_id)),
+            "clicking inside the search filter box must not close the dropdown"
+        );
     }
 }
